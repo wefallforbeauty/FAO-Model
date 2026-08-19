@@ -46,6 +46,154 @@ of `01.py` are:
 5. TimesFM integration and fallback forecaster
 6. Tkinter desktop dashboard
 
+## Mathematical model
+
+This section summarizes the equations as they are currently implemented in
+`01.py`. The notation is:
+
+| Symbol | Meaning | Current unit |
+|---|---|---|
+| $T$, $T_{max}$, $T_{min}$ | Mean, maximum, and minimum air temperature | degrees C |
+| $RH$ | Mean relative humidity | percent |
+| $u_2$ | Wind speed at 2 m | m/s |
+| $R_s$, $R_n$, $R_a$ | Solar, net, and extraterrestrial radiation | MJ/m2/day |
+| $P$ | Atmospheric pressure | kPa |
+| $h$ | Soil-water pressure head | cm |
+| $\theta$ | Volumetric water content | dimensionless |
+
+### Atmospheric terms
+
+Saturation vapor pressure and its temperature-curve slope are calculated as:
+
+$$
+e_s(T) = 0.6108\exp\left(\frac{17.27T}{T+237.3}\right)
+$$
+
+$$
+\Delta = \frac{4098e_s(T)}{(T+237.3)^2},
+\qquad
+e_a = e_s(T)\frac{RH}{100},
+\qquad
+\gamma = 0.000665P
+$$
+
+Extraterrestrial radiation is:
+
+$$
+R_a = \frac{24(60)}{\pi}G_{sc}d_r
+\left[
+\omega_s\sin(\varphi)\sin(\delta)
++\cos(\varphi)\cos(\delta)\sin(\omega_s)
+\right]
+$$
+
+where $G_{sc}=0.0820$, $\varphi$ is latitude in radians, and $d_r$,
+$\delta$, and $\omega_s$ are the inverse relative Earth-Sun distance, solar
+declination, and sunset hour angle calculated from the day of year.
+
+Net radiation is the difference between net shortwave and net longwave
+radiation:
+
+$$
+R_n = (1-0.23)R_s - R_{nl}
+$$
+
+The implementation estimates $R_{nl}$ from maximum and minimum temperature,
+actual vapor pressure, and the ratio of measured to clear-sky radiation.
+
+### Evapotranspiration equations
+
+ASCE Penman-Monteith is the reference calculation used by the program:
+
+$$
+ET_0 =
+\frac{
+0.408\Delta R_n
++\gamma\frac{900}{T+273}u_2(e_s-e_a)
+}{
+\Delta+\gamma(1+0.34u_2)
+}
+$$
+
+The current implementation assumes zero soil heat flux. Maize ET is then:
+
+$$
+ET_{maize} = K_cET_0,
+\qquad K_c=0.35
+$$
+
+Several simpler estimates are calculated alongside it:
+
+$$
+ET_{Hargreaves} = a_h\,0.0023(T+17.8)
+\sqrt{\max(0.1,T_{max}-T_{min})}\,R_a
+$$
+
+$$
+ET_{Priestley\text{-}Taylor} =
+\alpha_{PT}\frac{\Delta}{\Delta+\gamma}\frac{\max(0,R_n)}{\lambda},
+\qquad \lambda=2.45
+$$
+
+$$
+ET_{Abtew} = a_a\frac{R_s}{\lambda}
+$$
+
+Turc, Jensen-Haise, Blaney-Criddle, and Thornthwaite are also implemented.
+Their coefficients, together with those above, are updated from the generated
+weather history. For a method with base estimate $x_i$ and ASCE estimate
+$y_i$, most multiplicative coefficients use the least-squares fit:
+
+$$
+a = \frac{\sum_i x_i y_i}{\sum_i x_i^2}
+$$
+
+Blaney-Criddle instead uses an affine fit, $ET=a+bf$. Because ASCE
+Penman-Monteith supplies every calibration target, the fitted methods are not
+independent validations of ASCE.
+
+> **Thornthwaite note:** The code currently constructs a heat-index-like value
+> from each generated temperature. The standard method requires monthly mean
+> temperatures and an annual heat index, so this result should be treated as a
+> placeholder until the time aggregation is corrected.
+
+### Soil-water relationships
+
+The Richards prototype uses the van Genuchten-Mualem relationships. For
+$h<0$, effective saturation is:
+
+$$
+m=1-\frac{1}{n},
+\qquad
+S_e=\left[1+(\alpha|h|)^n\right]^{-m}
+$$
+
+Water content and hydraulic conductivity are then:
+
+$$
+\theta(h)=\theta_r+(\theta_s-\theta_r)S_e
+$$
+
+$$
+K(h)=K_s\sqrt{S_e}
+\left[1-\left(1-S_e^{1/m}\right)^m\right]^2
+$$
+
+For saturated cells ($h\geq0$), the code sets $S_e=1$ and $K=K_s$. The
+pressure-head form of Richards' equation can be summarized as:
+
+$$
+C(h)\frac{\partial h}{\partial t}
+=\nabla\cdot\left(K(h)\nabla H\right),
+\qquad H=h+z
+$$
+
+The finite-volume solver uses harmonic-mean conductivity at cell faces, a
+surface flux based on precipitation minus maize ET, and free drainage at the
+bottom. It advances pressure head explicitly and clips each update for
+stability. This clipping makes automated mass-balance and convergence tests
+especially important before the solver is used quantitatively.
+
 ## Requirements
 
 - Python 3.10 or newer is recommended
