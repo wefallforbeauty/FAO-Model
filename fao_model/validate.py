@@ -64,11 +64,7 @@ def prepare(records, split):
     The heat index comes from the training-period monthly climatology,
     T_30d is the trailing 30-day mean temperature (no look-ahead).
     """
-    by_month = defaultdict(list)
-    for d in records:
-        if d["timestamp"] < split:
-            by_month[d["timestamp"].month].append(d["T_mean"])
-    heat_index = thornthwaite_heat_index(np.mean(t) for t in by_month.values())
+    heat_index = thornthwaite_heat_index(weather_data.monthly_means(records, before=split))
     recent = deque(maxlen=30)
     prepared = []
     for d in records:

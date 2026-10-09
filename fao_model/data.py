@@ -126,6 +126,20 @@ def load(path=DEFAULT_CSV):
     return meta, records
 
 
+def monthly_means(records, key="T_mean", before=None):
+    """Mean of `key` for each calendar month (Jan..Dec), optionally only for days before `before`."""
+    sums, counts = [0.0] * 12, [0] * 12
+    for d in records:
+        if before is not None and d["timestamp"] >= before:
+            continue
+        month = d["timestamp"].month - 1
+        sums[month] += d[key]
+        counts[month] += 1
+    if 0 in counts:
+        raise ValueError("monthly_means needs data for all 12 calendar months")
+    return [s / c for s, c in zip(sums, counts)]
+
+
 def main():
     parser = argparse.ArgumentParser(description="Download daily ERA5 weather from Open-Meteo.")
     parser.add_argument("--name", default=SITE["name"])

@@ -1,3 +1,4 @@
+import argparse
 import tkinter as tk
 from tkinter import ttk
 
@@ -7,22 +8,27 @@ try:
     from matplotlib.figure import Figure
     from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
     MATPLOTLIB_AVAILABLE = True
-except Exception:
+    MATPLOTLIB_ERROR = ""
+except Exception as exc:     # e.g. matplotlib missing, or Pillow without ImageTk
     MATPLOTLIB_AVAILABLE = False
+    MATPLOTLIB_ERROR = f"{type(exc).__name__}: {exc}"
 
+from . import data as weather_data
 from .simulation import Simulation
 
 
 class App:
     UPDATE_MS = 1000
     MAX_PLOT_POINTS = 1200
+    MAX_TEXT_LINES = 5000
 
-    def __init__(self, root):
+    def __init__(self, root, records=None, source_name="synthetic weather", update_ms=UPDATE_MS):
         self.root = root
-        self.root.title("Continuous ET / Richards / TimesFM Dashboard")
+        self.root.title(f"Continuous ET / Richards / TimesFM Dashboard: {source_name}")
         self.root.geometry("1500x900")
         self.root.protocol("WM_DELETE_WINDOW", self.close)
-        self.sim = Simulation()
+        self.update_ms = update_ms
+        self.sim = Simulation(records)
         self.running = True
         self.after_id = None
         self.build_gui()
@@ -59,7 +65,8 @@ class App:
         else:
             ttk.Label(
                 right,
-                text="Install matplotlib to enable the live GUI graph."
+                text="Live graph unavailable (needs matplotlib with Tk support):\n"
+                     + MATPLOTLIB_ERROR
             ).pack(expand=True)
 
     def update(self):
@@ -69,13 +76,24 @@ class App:
             data, results, forecasts = self.sim.step()
             self.display(data, results, forecasts)
             self.update_plot()
+        except StopIteration:
+            self.text.insert(tk.END, "\n\nEND OF WEATHER DATA\n")
+            self.text.see(tk.END)
+            return
         except Exception as exc:
             self.text.insert(
                 tk.END,
                 "\n\nERROR IN UPDATE: %s: %s\n" % (type(exc).__name__, exc)
             )
+        self._trim_text()
         if self.running:
-            self.after_id = self.root.after(self.UPDATE_MS, self.update)
+            self.after_id = self.root.after(self.update_ms, self.update)
+
+    def _trim_text(self):
+        # Keep the log bounded so a long run does not grow memory without limit.
+        excess = int(self.text.index("end-1c").split(".")[0]) - self.MAX_TEXT_LINES
+        if excess > 0:
+            self.text.delete("1.0", f"{excess + 1}.0")
 
     def update_plot(self):
         if not MATPLOTLIB_AVAILABLE:
@@ -133,8 +151,11 @@ class App:
             f"Wind u2         : {data['u2']:.2f} m/s\n"
             f"Solar radiation : {data['Rs']:.2f} MJ/m²/day\n"
             f"Pressure        : {data['P']:.2f} kPa\n"
-            f"Precipitation   : {data['precip']:.3f} mm/day\n\n"
+            f"Precipitation   : {data['precip']:.3f} mm/day\n"
         )
+        if "ET0_ref" in data:
+            self.text.insert(tk.END, f"Open-Meteo ET0  : {data['ET0_ref']:.2f} mm/day\n")
+        self.text.insert(tk.END, "\n")
         coeffs = {k: ("FAO-24" if v is None else f"{v:.5f}") for k, v in sim.calib.coeffs.items()}
         self.text.insert(
             tk.END,
@@ -194,7 +215,22 @@ class App:
         self.root.destroy()
 
 
-def main():
+def main(argv=None):
+    parser = argparse.ArgumentParser(description="Run the ET / soil water dashboard.")
+    parser.add_argument("--data", default=str(weather_data.DEFAULT_CSV),
+                        help="daily weather CSV written by fao_model.data")
+    parser.add_argument("--synthetic", action="store_true",
+                        help="use the synthetic weather generator instead of real data")
+    parser.add_argument("--interval-ms", type=int, default=App.UPDATE_MS,
+                        help="milliseconds between simulated days")
+    args = parser.parse_args(argv)
+    records, source_name = None, "synthetic weather"
+    if not args.synthetic:
+        try:
+            meta, records = weather_data.load(args.data)
+            source_name = meta.get("site", args.data)
+        except FileNotFoundError:
+            print(f"{args.data} not found; using synthetic weather.")
     root = tk.Tk()
-    App(root)
+    App(root, records, source_name, args.interval_ms)
     root.mainloop()
