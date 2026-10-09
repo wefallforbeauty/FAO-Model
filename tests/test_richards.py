@@ -60,7 +60,7 @@ def test_lateral_and_vertical_fluxes_are_divided_by_cell_size():
     K = s._K(s.h)
     rate, q_bottom = s._internal_rates(s.h, K)
     K0, K1 = K[0, 0, 0], K[1, 0, 0]
-    qx = 2.0 * K0 * K1 / (K0 + K1) * (-50.0 + 200.0) / 10.0     # cm/day through the face
+    qx = 0.5 * (K0 + K1) * (-50.0 + 200.0) / 10.0     # cm/day through the face
     assert rate[0, 0, 0] == pytest.approx(-qx / 10.0 - K0 / 5.0)
     assert rate[1, 0, 0] == pytest.approx(qx / 10.0 - K1 / 5.0)
     assert np.allclose(q_bottom, K[:, :, -1])
@@ -81,4 +81,16 @@ def test_rain_beyond_infiltration_capacity_runs_off():
     assert out["runoff"] > 10.0
     assert out["infiltration"] + out["runoff"] == pytest.approx(20.0)
     assert np.all(s.theta < s.params["theta_s"])
+    assert abs(s.mass_balance_error) < 1e-9
+
+
+def test_wetting_front_enters_dry_soil():
+    # Konya, 2005-11-04: 41.5 mm of rain on a wet top layer over dry soil. With a
+    # harmonic mean of K the front stalled and the second layer over-saturated.
+    s = RichardsSolver3D(nx=1, ny=1)
+    s.set_head(np.array([-38.5, -155.0, -204.1, -202.2, -198.2]).reshape(1, 1, 5))
+    theta_start = s.theta.copy()
+    s.step(4.12, dt=1.0)
+    assert np.all(s.theta < s.params["theta_s"])
+    assert s.theta[0, 0, 2] > theta_start[0, 0, 2] + 0.01
     assert abs(s.mass_balance_error) < 1e-9

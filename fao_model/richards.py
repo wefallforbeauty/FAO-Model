@@ -44,8 +44,10 @@ def vg_capacity_arr(h, theta_r, theta_s, alpha, n):
     return np.maximum(C, 1e-6)
 
 
-def _harmonic(a, b):
-    return 2.0 * a * b / (a + b + 1e-12)
+def _face_K(a, b):
+    # Arithmetic mean. A harmonic mean nearly blocks a wetting front entering
+    # dry soil (it tends to the dry side's tiny K), so water piles up above it.
+    return 0.5 * (a + b)
 
 
 class RichardsSolver3D:
@@ -111,14 +113,14 @@ class RichardsSolver3D:
         """dtheta/dt (1/day) from flow between cells and bottom drainage; bottom flux (cm/day)."""
         dx, dy, dz = self.dx, self.dy, self.dz
         rate = np.zeros_like(h)
-        qx = _harmonic(K[:-1], K[1:]) * (h[:-1] - h[1:]) / dx
+        qx = _face_K(K[:-1], K[1:]) * (h[:-1] - h[1:]) / dx
         rate[:-1] -= qx / dx
         rate[1:] += qx / dx
-        qy = _harmonic(K[:, :-1], K[:, 1:]) * (h[:, :-1] - h[:, 1:]) / dy
+        qy = _face_K(K[:, :-1], K[:, 1:]) * (h[:, :-1] - h[:, 1:]) / dy
         rate[:, :-1] -= qy / dy
         rate[:, 1:] += qy / dy
         # Downward flux; total head H = h - depth, so gravity adds +1 to the gradient.
-        qz = _harmonic(K[:, :, :-1], K[:, :, 1:]) * ((h[:, :, :-1] - h[:, :, 1:]) / dz + 1.0)
+        qz = _face_K(K[:, :, :-1], K[:, :, 1:]) * ((h[:, :, :-1] - h[:, :, 1:]) / dz + 1.0)
         rate[:, :, :-1] -= qz / dz
         rate[:, :, 1:] += qz / dz
         q_bottom = K[:, :, -1]
