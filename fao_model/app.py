@@ -44,7 +44,7 @@ class App:
             self.figure = Figure(figsize=(11, 7), dpi=100)
             self.ax = self.figure.add_subplot(111)
             self.ax.set_title("Live ET equations and TimesFM forecasts")
-            self.ax.set_xlabel("Generated step")
+            self.ax.set_xlabel("Day")
             self.ax.set_ylabel("ET / forecast value (mm/day)")
             self.ax.grid(True, alpha=0.25)
             self.canvas = FigureCanvasTkAgg(self.figure, master=right)
@@ -83,9 +83,9 @@ class App:
         self.ax.clear()
         self.ax.set_title(
             "Live historical equations + long TimesFM forecast "
-            f"(step {self.sim.step_number})"
+            f"(day {self.sim.step_number})"
         )
-        self.ax.set_xlabel("Generated step")
+        self.ax.set_xlabel("Day")
         self.ax.set_ylabel("Value")
         self.ax.grid(True, alpha=0.25)
         plot_keys = [
@@ -114,11 +114,11 @@ class App:
 
     def display(self, data, results, forecasts):
         sim = self.sim
-        ts = data["timestamp"].strftime("%Y-%m-%d %H:%M:%S")
+        ts = data["timestamp"].strftime("%Y-%m-%d")
         self.text.insert(
             tk.END,
             "\n" + "=" * 78 + "\n"
-            f"STEP {sim.step_number} | simulated timestamp: {ts}\n"
+            f"DAY {sim.step_number} | date: {ts}\n"
             + "=" * 78 + "\n"
         )
         self.text.insert(
@@ -135,18 +135,18 @@ class App:
             f"Pressure        : {data['P']:.2f} kPa\n"
             f"Precipitation   : {data['precip']:.3f} mm/day\n\n"
         )
-        coeffs = sim.calib.coeffs
+        coeffs = {k: ("FAO-24" if v is None else f"{v:.5f}") for k, v in sim.calib.coeffs.items()}
         self.text.insert(
             tk.END,
-            "CALIBRATED COEFFICIENTS\n"
-            f"Hargreaves a       : {coeffs['hargreaves_a']:.5f}\n"
-            f"Turc a             : {coeffs['turc_a']:.5f}\n"
-            f"Abtew a            : {coeffs['abtew_a']:.5f}\n"
-            f"Priestley-Taylor α : {coeffs['pt_alpha']:.5f}\n"
-            f"Jensen-Haise a     : {coeffs['jh_a']:.5f}\n"
-            f"Blaney-Criddle a   : {coeffs['bc_a']:.5f}\n"
-            f"Blaney-Criddle b   : {coeffs['bc_b']:.5f}\n"
-            f"Maize Kc           : {coeffs['kc_maize']:.5f}\n\n"
+            "CALIBRATED COEFFICIENTS (fitted on earlier days)\n"
+            f"Hargreaves a       : {coeffs['hargreaves_a']}\n"
+            f"Turc a             : {coeffs['turc_a']}\n"
+            f"Abtew a            : {coeffs['abtew_a']}\n"
+            f"Priestley-Taylor α : {coeffs['pt_alpha']}\n"
+            f"Jensen-Haise a     : {coeffs['jh_a']}\n"
+            f"Blaney-Criddle a   : {coeffs['bc_a']}\n"
+            f"Blaney-Criddle b   : {coeffs['bc_b']}\n"
+            f"Maize Kc           : {coeffs['kc_maize']}\n\n"
         )
         self.text.insert(tk.END, "EQUATION RESULTS (mm/day unless noted)\n")
         for key, val in results.items():
@@ -162,7 +162,7 @@ class App:
             tk.END,
             f"TIMESFM STATUS\n{sim.forecaster.status}\n"
             f"Context length    : {sim.forecaster.CONTEXT_LEN}\n"
-            f"Forecast horizon  : {sim.forecaster.HORIZON_LEN} generated steps\n\n"
+            f"Forecast horizon  : {sim.forecaster.HORIZON_LEN} days\n\n"
         )
         self.text.insert(tk.END, "FORECASTS\n")
         for key, fc in forecasts.items():

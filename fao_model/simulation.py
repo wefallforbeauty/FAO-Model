@@ -1,3 +1,5 @@
+from collections import deque
+
 from .calibration import Calibrator
 from .et import compute_all
 from .forecast import Forecaster
@@ -6,13 +8,19 @@ from .weather import WeatherGenerator
 
 
 class Simulation:
-    def __init__(self):
-        self.gen = WeatherGenerator(lat=40.0, elev=100.0, interval_minutes=10)
+    """One step is one day: weather -> ET equations -> soil water -> forecasts."""
+
+    CALIBRATION_WINDOW = 365    # days
+
+    def __init__(self, seed=None):
+        self.gen = WeatherGenerator(lat=40.0, elev=100.0, seed=seed)
+        self.heat_index = self.gen.heat_index()
+        self.recent_T = deque(maxlen=30)
         self.calib = Calibrator()
         self.richards = RichardsSolver3D(nx=5, ny=5, nz=5)
         self.forecaster = Forecaster()
         self.data_history = []
-        self.data_batch = []
+        self.data_batch = deque(maxlen=self.CALIBRATION_WINDOW)
         self.history = {}
         self.forecasts = {}
         self.step_number = 0
@@ -20,12 +28,14 @@ class Simulation:
     def step(self):
         data = self.gen.ensure_required(self.gen.generate())
         self.step_number += 1
+        self.recent_T.append(data["T_mean"])
+        data["T_30d"] = sum(self.recent_T) / len(self.recent_T)
+        data["heat_index"] = self.heat_index
         self.data_history.append(data.copy())
-        self.data_batch.append(data.copy())
-        if len(self.data_batch) > 256:
-            self.data_batch.pop(0)
-        self.calib.calibrate(self.data_batch)
+        # Walk-forward: today's values use coefficients fitted on earlier days only.
+        self.calib.calibrate(list(self.data_batch))
         results = compute_all(data, self.calib.coeffs)
+        self.data_batch.append(data.copy())
         q_top_cm_s = (
             data["precip"] - results["ET_PM_maize"]
         ) * 0.1 / 86400.0

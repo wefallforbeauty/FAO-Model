@@ -2,100 +2,95 @@ import math
 import random
 from datetime import datetime, timedelta
 
-from .meteo import extraterrestrial_radiation
+from .meteo import atmospheric_pressure, extraterrestrial_radiation
 
 
 class WeatherGenerator:
-    def __init__(self, lat=40.0, elev=100.0, interval_minutes=10):
+    """Synthetic daily weather: seasonal cycles plus day-to-day persistence.
+
+    One generate() call is one day, so the daily ET equations get inputs
+    with the time scale they were derived for.
+    """
+
+    def __init__(self, lat=40.0, elev=100.0, start=None, seed=None):
         self.lat = lat
         self.elev = elev
-        self.interval_minutes = interval_minutes
-        self.timestamp = datetime.now()
+        self.timestamp = start or datetime.now().replace(hour=0, minute=0, second=0, microsecond=0)
         self.current = None
-        self.rng = random.Random()
+        self.rng = random.Random(seed)
 
     def _clip(self, x, lo, hi):
         return max(lo, min(hi, x))
 
-    def _solar_fraction(self, ts):
-        hour = ts.hour + ts.minute / 60.0
-        season = math.sin(2 * math.pi * (ts.timetuple().tm_yday - 80) / 365.25)
-        sunrise = 6.0 - 1.4 * season
-        sunset = 18.0 + 1.4 * season
-        if hour <= sunrise or hour >= sunset:
-            return 0.0
-        x = (hour - sunrise) / max(1e-6, sunset - sunrise)
-        return math.sin(math.pi * x)
+    def _seasonal_temperature(self, doy):
+        return 20.0 + 11.0 * math.sin(2 * math.pi * (doy - 100) / 365.25)
 
-    def _seasonal_temperature(self, ts):
-        return 20.0 + 11.0 * math.sin(
-            2 * math.pi * (ts.timetuple().tm_yday - 100) / 365.25
-        )
+    def heat_index(self):
+        """Thornthwaite annual heat index of the generator's seasonal climate."""
+        from .et import thornthwaite_heat_index
+        mid_month_doys = [15 + 30.4 * m for m in range(12)]
+        return thornthwaite_heat_index(self._seasonal_temperature(d) for d in mid_month_doys)
 
-    def _new_rain_state(self, rain):
-        if rain > 0.05:
-            if self.rng.random() < 0.88:
-                return self._clip(rain * self.rng.uniform(0.75, 1.15), 0.0, 35.0)
-            return 0.0
-        if self.rng.random() < 0.06:
-            return self.rng.uniform(0.1, 4.0)
+    def _new_rain(self, wet_yesterday, doy):
+        # Two-state Markov chain, wetter in winter than in summer.
+        season = 1.0 + 0.6 * math.cos(2 * math.pi * (doy - 15) / 365.25)
+        p_wet = (0.45 if wet_yesterday else 0.15) * season / 1.6
+        if self.rng.random() < p_wet:
+            return self._clip(self.rng.expovariate(1.0 / 6.0), 0.1, 60.0)
         return 0.0
 
     def generate(self):
         ts = self.timestamp
         doy = ts.timetuple().tm_yday
-        seasonal_T = self._seasonal_temperature(ts)
-        solar = self._solar_fraction(ts)
+        seasonal_T = self._seasonal_temperature(doy)
         if self.current is None:
-            T_mean = seasonal_T + self.rng.uniform(-1.5, 1.5)
-            T_range = self.rng.uniform(6.0, 12.0)
-            RH_mean = self.rng.uniform(55.0, 80.0)
-            u2 = self.rng.uniform(1.0, 5.0)
-            rain = self.rng.uniform(0.0, 1.0)
+            T_anom = self.rng.uniform(-1.5, 1.5)
+            T_range = self.rng.uniform(8.0, 14.0)
+            RH_anom = 0.0
+            u2 = self.rng.uniform(1.0, 3.0)
+            rain = 0.0
         else:
             prev = self.current
-            T_target = seasonal_T + 2.0 * (solar - 0.45)
-            T_mean = 0.94 * prev["T_mean"] + 0.06 * T_target + self.rng.gauss(0, 0.35)
-            T_mean = self._clip(T_mean, -20.0, 45.0)
-            T_range = 0.90 * (prev["T_max"] - prev["T_min"]) + self.rng.gauss(0, 0.25)
-            T_range = self._clip(T_range, 5.0, 16.0)
-            humidity_target = 78.0 - 0.55 * (T_mean - seasonal_T) - 18.0 * solar
-            RH_mean = 0.92 * prev["RH_mean"] + 0.08 * humidity_target + self.rng.gauss(0, 0.9)
-            RH_mean = self._clip(RH_mean, 25.0, 98.0)
-            wind_target = 1.0 + 5.0 * solar
-            u2 = 0.90 * prev["u2"] + 0.10 * wind_target + self.rng.gauss(0, 0.18)
-            u2 = self._clip(u2, 0.1, 12.0)
-            rain = self._new_rain_state(prev["precip"])
-        T_max = T_mean + 0.5 * T_range
-        T_min = T_mean - 0.5 * T_range
-        RH_max = self._clip(RH_mean + 6.0 + abs(self.rng.gauss(0, 2.0)), RH_mean, 100.0)
-        RH_min = self._clip(RH_mean - 6.0 - abs(self.rng.gauss(0, 2.0)), 5.0, RH_mean)
-        Ra = extraterrestrial_radiation(self.lat, doy)
-        clear_sky = max(0.0, 0.75 * Ra)
-        cloud_factor = self._clip(
-            0.92 - 0.004 * max(0.0, RH_mean - 55.0) + self.rng.gauss(0, 0.035),
-            0.20, 1.0
+            T_anom = 0.7 * (prev["T_mean"] - prev["T_seasonal"]) + self.rng.gauss(0, 1.8)
+            T_range = 11.0 + 0.5 * (prev["T_max"] - prev["T_min"] - 11.0) + self.rng.gauss(0, 1.5)
+            RH_anom = 0.6 * prev["RH_anom"] + self.rng.gauss(0, 5.0)
+            u2 = 2.0 + 0.5 * (prev["u2"] - 2.0) + self.rng.gauss(0, 0.5)
+            rain = self._new_rain(prev["precip"] > 0, doy)
+        T_mean = self._clip(seasonal_T + T_anom, -20.0, 40.0)
+        T_range = self._clip(T_range - (3.0 if rain > 0 else 0.0), 3.0, 20.0)
+        RH_mean = self._clip(
+            65.0 - 15.0 * math.sin(2 * math.pi * (doy - 100) / 365.25)
+            - 1.0 * T_anom + RH_anom + (12.0 if rain > 0 else 0.0),
+            20.0, 98.0,
         )
-        Rs = self._clip(clear_sky * solar * cloud_factor, 0.0, max(0.1, clear_sky))
-        P = 101.3 * (1.0 - 2.25577e-5 * self.elev) ** 5.25588
+        RH_max = self._clip(RH_mean + 15.0 + abs(self.rng.gauss(0, 4.0)), RH_mean, 100.0)
+        RH_min = self._clip(RH_mean - 15.0 - abs(self.rng.gauss(0, 4.0)), 5.0, RH_mean)
+        u2 = self._clip(u2, 0.3, 8.0)
+        Rso = (0.75 + 2e-5 * self.elev) * extraterrestrial_radiation(self.lat, doy)
+        cloud_factor = self._clip(
+            0.85 - (0.35 if rain > 0 else 0.0) - 0.003 * max(0.0, RH_mean - 55.0)
+            + self.rng.gauss(0, 0.05),
+            0.25, 1.0,
+        )
         self.current = {
             "timestamp": ts,
             "doy": doy,
             "lat": self.lat,
             "elev": self.elev,
             "T_mean": T_mean,
-            "T_max": max(T_mean, T_max),
-            "T_min": min(T_mean, T_min),
+            "T_max": T_mean + 0.5 * T_range,
+            "T_min": T_mean - 0.5 * T_range,
+            "T_seasonal": seasonal_T,
             "RH_mean": RH_mean,
             "RH_max": RH_max,
             "RH_min": RH_min,
+            "RH_anom": RH_anom,
             "u2": u2,
-            "Rs": Rs,
-            "P": P,
+            "Rs": Rso * cloud_factor,
+            "P": atmospheric_pressure(self.elev),
             "precip": rain,
         }
-
-        self.timestamp += timedelta(minutes=self.interval_minutes)
+        self.timestamp += timedelta(days=1)
         return self.current.copy()
 
     def ensure_required(self, data):
