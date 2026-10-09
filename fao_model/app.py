@@ -151,12 +151,19 @@ class App:
         self.text.insert(tk.END, "EQUATION RESULTS (mm/day unless noted)\n")
         for key, val in results.items():
             self.text.insert(tk.END, f"{key:25s}: {val:.6f}\n")
+        flux = sim.richards.last_step
         self.text.insert(
             tk.END,
             "\nRICHARDS 3D\n"
             f"Grid               : {sim.richards.nx}x{sim.richards.ny}x{sim.richards.nz}\n"
             f"Mean pressure head : {results['Richards_head_mean']:.4f} cm\n"
-            f"Mean water content : {results['Richards_theta_mean']:.6f}\n\n"
+            f"Mean water content : {results['Richards_theta_mean']:.6f}\n"
+            f"Storage            : {10 * sim.richards.storage:.2f} mm\n"
+            f"Today (mm)         : infiltration {10 * flux['infiltration']:.2f}, "
+            f"evaporation {10 * flux['evaporation']:.2f}, drainage {10 * flux['drainage']:.3f}, "
+            f"runoff {10 * flux['runoff']:.2f}, ET deficit {10 * flux['evaporation_deficit']:.2f}\n"
+            f"Water balance error: {10 * sim.richards.mass_balance_error:.2e} mm "
+            f"({flux['substeps']} sub-steps)\n\n"
         )
         self.text.insert(
             tk.END,

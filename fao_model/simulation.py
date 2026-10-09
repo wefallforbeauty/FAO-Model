@@ -36,11 +36,8 @@ class Simulation:
         self.calib.calibrate(list(self.data_batch))
         results = compute_all(data, self.calib.coeffs)
         self.data_batch.append(data.copy())
-        q_top_cm_s = (
-            data["precip"] - results["ET_PM_maize"]
-        ) * 0.1 / 86400.0
-        for _ in range(10):
-            self.richards.step(q_top_cm_s, dt=0.1)
+        q_top_cm_day = (data["precip"] - results["ET_PM_maize"]) / 10.0
+        self.richards.step(q_top_cm_day, dt=1.0)
         results["Richards_theta_mean"] = self.richards.theta_mean
         results["Richards_head_mean"] = self.richards.pressure_head_mean
         for key, val in results.items():
