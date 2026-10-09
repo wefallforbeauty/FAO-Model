@@ -1,0 +1,193 @@
+import tkinter as tk
+from tkinter import ttk
+
+import numpy as np
+
+try:
+    from matplotlib.figure import Figure
+    from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
+    MATPLOTLIB_AVAILABLE = True
+except Exception:
+    MATPLOTLIB_AVAILABLE = False
+
+from .simulation import Simulation
+
+
+class App:
+    UPDATE_MS = 1000
+    MAX_PLOT_POINTS = 1200
+
+    def __init__(self, root):
+        self.root = root
+        self.root.title("Continuous ET / Richards / TimesFM Dashboard")
+        self.root.geometry("1500x900")
+        self.root.protocol("WM_DELETE_WINDOW", self.close)
+        self.sim = Simulation()
+        self.running = True
+        self.after_id = None
+        self.build_gui()
+        self.update()
+
+    def build_gui(self):
+        main = ttk.Panedwindow(self.root, orient=tk.HORIZONTAL)
+        main.pack(fill=tk.BOTH, expand=True)
+        left = ttk.Frame(main, padding=5)
+        right = ttk.Frame(main, padding=5)
+        main.add(left, weight=1)
+        main.add(right, weight=3)
+        self.text = tk.Text(left, height=45, width=75, font=("Consolas", 9))
+        scroll = ttk.Scrollbar(left, orient=tk.VERTICAL, command=self.text.yview)
+        self.text.configure(yscrollcommand=scroll.set)
+        self.text.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        scroll.pack(side=tk.RIGHT, fill=tk.Y)
+        if MATPLOTLIB_AVAILABLE:
+            self.figure = Figure(figsize=(11, 7), dpi=100)
+            self.ax = self.figure.add_subplot(111)
+            self.ax.set_title("Live ET equations and TimesFM forecasts")
+            self.ax.set_xlabel("Generated step")
+            self.ax.set_ylabel("ET / forecast value (mm/day)")
+            self.ax.grid(True, alpha=0.25)
+            self.canvas = FigureCanvasTkAgg(self.figure, master=right)
+            self.canvas.get_tk_widget().pack(fill=tk.BOTH, expand=True)
+            controls = ttk.Frame(right)
+            controls.pack(fill=tk.X, pady=4)
+            ttk.Label(
+                controls,
+                text="Plot: last %d historical points + %d-step forecast" %
+                     (self.MAX_PLOT_POINTS, self.sim.forecaster.HORIZON_LEN)
+            ).pack(side=tk.LEFT)
+        else:
+            ttk.Label(
+                right,
+                text="Install matplotlib to enable the live GUI graph."
+            ).pack(expand=True)
+
+    def update(self):
+        if not self.running:
+            return
+        try:
+            data, results, forecasts = self.sim.step()
+            self.display(data, results, forecasts)
+            self.update_plot()
+        except Exception as exc:
+            self.text.insert(
+                tk.END,
+                "\n\nERROR IN UPDATE: %s: %s\n" % (type(exc).__name__, exc)
+            )
+        if self.running:
+            self.after_id = self.root.after(self.UPDATE_MS, self.update)
+
+    def update_plot(self):
+        if not MATPLOTLIB_AVAILABLE:
+            return
+        self.ax.clear()
+        self.ax.set_title(
+            "Live historical equations + long TimesFM forecast "
+            f"(step {self.sim.step_number})"
+        )
+        self.ax.set_xlabel("Generated step")
+        self.ax.set_ylabel("Value")
+        self.ax.grid(True, alpha=0.25)
+        plot_keys = [
+            "ET_ASCE_PM",
+            "ET_PM_maize",
+            "ET_Thornthwaite",
+            "ET_Hargreaves",
+            "ET_PriestleyTaylor",
+        ]
+        for key in plot_keys:
+            series = self.sim.history.get(key, [])
+            if not series:
+                continue
+            start = max(0, len(series) - self.MAX_PLOT_POINTS)
+            y = np.asarray(series[start:], dtype=float)
+            x = np.arange(start + 1, len(series) + 1)
+            self.ax.plot(x, y, linewidth=1.2, label=key)
+            fc = self.sim.forecasts.get(key, [])
+            if fc:
+                fx = np.arange(len(series) + 1, len(series) + len(fc) + 1)
+                self.ax.plot(fx, fc, linestyle="--", linewidth=1.1,
+                             label=f"{key} forecast")
+        self.ax.legend(loc="upper left", fontsize=7, ncol=2)
+        self.figure.tight_layout()
+        self.canvas.draw_idle()
+
+    def display(self, data, results, forecasts):
+        sim = self.sim
+        ts = data["timestamp"].strftime("%Y-%m-%d %H:%M:%S")
+        self.text.insert(
+            tk.END,
+            "\n" + "=" * 78 + "\n"
+            f"STEP {sim.step_number} | simulated timestamp: {ts}\n"
+            + "=" * 78 + "\n"
+        )
+        self.text.insert(
+            tk.END,
+            "WEATHER INPUTS\n"
+            f"T_mean          : {data['T_mean']:.2f} °C\n"
+            f"T_max           : {data['T_max']:.2f} °C\n"
+            f"T_min           : {data['T_min']:.2f} °C\n"
+            f"RH_mean         : {data['RH_mean']:.2f} %\n"
+            f"RH_max          : {data['RH_max']:.2f} %\n"
+            f"RH_min          : {data['RH_min']:.2f} %\n"
+            f"Wind u2         : {data['u2']:.2f} m/s\n"
+            f"Solar radiation : {data['Rs']:.2f} MJ/m²/day\n"
+            f"Pressure        : {data['P']:.2f} kPa\n"
+            f"Precipitation   : {data['precip']:.3f} mm/day\n\n"
+        )
+        coeffs = sim.calib.coeffs
+        self.text.insert(
+            tk.END,
+            "CALIBRATED COEFFICIENTS\n"
+            f"Hargreaves a       : {coeffs['hargreaves_a']:.5f}\n"
+            f"Turc a             : {coeffs['turc_a']:.5f}\n"
+            f"Abtew a            : {coeffs['abtew_a']:.5f}\n"
+            f"Priestley-Taylor α : {coeffs['pt_alpha']:.5f}\n"
+            f"Jensen-Haise a     : {coeffs['jh_a']:.5f}\n"
+            f"Blaney-Criddle a   : {coeffs['bc_a']:.5f}\n"
+            f"Blaney-Criddle b   : {coeffs['bc_b']:.5f}\n"
+            f"Maize Kc           : {coeffs['kc_maize']:.5f}\n\n"
+        )
+        self.text.insert(tk.END, "EQUATION RESULTS (mm/day unless noted)\n")
+        for key, val in results.items():
+            self.text.insert(tk.END, f"{key:25s}: {val:.6f}\n")
+        self.text.insert(
+            tk.END,
+            "\nRICHARDS 3D\n"
+            f"Grid               : {sim.richards.nx}x{sim.richards.ny}x{sim.richards.nz}\n"
+            f"Mean pressure head : {results['Richards_head_mean']:.4f} cm\n"
+            f"Mean water content : {results['Richards_theta_mean']:.6f}\n\n"
+        )
+        self.text.insert(
+            tk.END,
+            f"TIMESFM STATUS\n{sim.forecaster.status}\n"
+            f"Context length    : {sim.forecaster.CONTEXT_LEN}\n"
+            f"Forecast horizon  : {sim.forecaster.HORIZON_LEN} generated steps\n\n"
+        )
+        self.text.insert(tk.END, "FORECASTS\n")
+        for key, fc in forecasts.items():
+            if key.startswith("Richards_"):
+                continue
+            values = ", ".join(f"{v:.3f}" for v in fc)
+            self.text.insert(tk.END, f"{key:25s}: {values}\n")
+        self.text.insert(
+            tk.END,
+            f"\nTOTAL RETAINED WEATHER SAMPLES : {len(sim.data_history)}\n"
+            f"TOTAL RETAINED RESULT POINTS   : {len(next(iter(sim.history.values()), []))}\n"
+        )
+        self.text.see(tk.END)
+
+    def close(self):
+        self.running = False
+        if self.after_id is not None:
+            try:
+                self.root.after_cancel(self.after_id)
+            except Exception:
+                pass
+        self.root.destroy()
+
+
+def main():
+    root = tk.Tk()
+    App(root)
+    root.mainloop()
