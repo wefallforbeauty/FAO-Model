@@ -11,6 +11,7 @@ def test_daily_steps_produce_all_series():
     for key, series in sim.history.items():
         assert len(series) == 40, key
     assert 0.0 < results["ET_Thornthwaite"] < 15.0
+    assert 0.0 <= results["ET_crop_actual"] <= results["ET_crop_potential"] + 1e-9
 
 
 def test_calibration_only_uses_earlier_days():
@@ -33,6 +34,8 @@ def test_replays_real_daily_records():
     assert 40.0 < sim.heat_index < 90.0
     assert sim.calib.coeffs != LITERATURE_COEFFS
     assert abs(sim.richards.mass_balance_error) < 1e-9
+    assert sim.richards is sim.field.soil
+    assert sum(sim.history["ET_crop_actual"]) > 0.0
     # Records are copied, not modified in place.
     assert "T_30d" not in records[0]
 
@@ -41,7 +44,8 @@ def test_stops_at_the_end_of_the_records():
     import pytest
     from fao_model import data
     _, records = data.load()
-    sim = Simulation(records[:3], heat_index=60.0)
+    from fao_model.crop import Crop
+    sim = Simulation(records[:3], heat_index=60.0, crop=Crop())
     for _ in range(3):
         sim.step()
     with pytest.raises(StopIteration):

@@ -108,6 +108,4 @@ def test_literature_equations_have_the_magnitude_of_reference_et():
     results = et.compute_all(d, LITERATURE_COEFFS)
     eto = results["ET_ASCE_PM"]
     for key, value in results.items():
-        if key == "ET_PM_maize":
-            continue
         assert 0.6 * eto < value < 1.5 * eto, key
