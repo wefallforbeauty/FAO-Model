@@ -149,7 +149,6 @@ def blaney_criddle_ab(d):
 def compute_all(d, coeffs):
     """All equations for one day. bc_a/bc_b of None means the FAO-24 regression."""
     eto_asce = asce_pm(d)
-    et_pm_maize = coeffs["kc_maize"] * eto_asce
     et_th = thornthwaite(d)
     if coeffs["bc_a"] is None or coeffs["bc_b"] is None:
         bc_a, bc_b = blaney_criddle_ab(d)
@@ -158,7 +157,6 @@ def compute_all(d, coeffs):
     et_bc = bc_a + bc_b * blaney_criddle_f(d)
     return {
         "ET_ASCE_PM": eto_asce,
-        "ET_PM_maize": et_pm_maize,
         "ET_Thornthwaite": et_th,
         "ET_BlaneyCriddle": max(0.0, et_bc),
         "ET_Turc": max(0.0, coeffs["turc_a"] * turc_base(d)),

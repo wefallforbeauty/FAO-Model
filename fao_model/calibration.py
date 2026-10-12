@@ -14,7 +14,6 @@ LITERATURE_COEFFS = {
     "jh_a": 1.0,
     "bc_a": None,       # None: FAO-24 a and b from RH_min, n/N and u2
     "bc_b": None,
-    "kc_maize": 0.35,
 }
 
 # Multiplicative coefficient -> equation it scales

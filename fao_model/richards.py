@@ -60,6 +60,8 @@ class RichardsSolver3D:
       near-saturated surface lets in (excess becomes runoff) and by what a
       dry surface at h_min can still evaporate;
     - bottom: free drainage (unit gradient), sides: no flow.
+    Roots can extract water (sink term): potential transpiration spread
+    over the layers by root weights and reduced by a stress factor alpha(h).
     Sub-steps follow the explicit stability limit, which becomes very small
     in near-saturated soil; that case needs an implicit scheme.
     """
@@ -89,7 +91,8 @@ class RichardsSolver3D:
         self.theta = self._theta(np.asarray(h, dtype=float))
         self.h = self._head(self.theta)
         self.totals = dict.fromkeys(
-            ("infiltration", "evaporation", "drainage", "runoff", "evaporation_deficit"), 0.0)
+            ("infiltration", "evaporation", "drainage", "runoff", "evaporation_deficit",
+             "transpiration", "transpiration_deficit"), 0.0)
         self.last_step = dict(self.totals, substeps=0)
         self.initial_storage = self.storage
 
@@ -139,9 +142,12 @@ class RichardsSolver3D:
         e_max = K0 * ((h0 - self.h_min) / half - 1.0)
         return -np.minimum(-q_top, np.maximum(e_max, 0.0))
 
-    def step(self, q_top, dt=1.0):
-        """Advance dt days with surface flux q_top (cm/day, + downward: rain minus ET).
+    def step(self, q_top, dt=1.0, tp=0.0, root_weights=None, alpha=None):
+        """Advance dt days with surface flux q_top (cm/day, + downward: rain minus evaporation).
 
+        tp is the potential transpiration (cm/day), taken from layer k at the
+        rate alpha(h_k) * root_weights[k] * tp; root_weights sum to 1 over the
+        layers and alpha(h) is the 0-1 stress factor (e.g. Feddes).
         Returns this step's water balance terms in cm, averaged over the surface.
         """
         p = self.params
@@ -159,6 +165,12 @@ class RichardsSolver3D:
             h, theta = self.h, self.theta
             K = self._K(h)
             rate_int, q_bottom = self._internal_rates(h, K)
+            if tp > 0.0:
+                uptake = alpha(h) * np.asarray(root_weights) * (tp / dz)    # 1/day
+                rate_int -= uptake
+                transpiration = uptake.sum(axis=2) * dz                       # cm/day per column
+            else:
+                transpiration = np.zeros((self.nx, self.ny))
             q_surf_max = self._surface_rate(q_top, h, K)
             diffusivity = K / self._capacity(h)
             sub = min(dt - t, self.COURANT / (2.0 * float(diffusivity.max()) * inv_d2))
@@ -190,6 +202,8 @@ class RichardsSolver3D:
                 ("drainage", q_bottom),
                 ("runoff", np.maximum(q_top, 0.0) - np.maximum(q_surf, 0.0)),
                 ("evaporation_deficit", np.maximum(-q_top, 0.0) - np.maximum(-q_surf, 0.0)),
+                ("transpiration", transpiration),
+                ("transpiration_deficit", tp - transpiration),
             ):
                 step_totals[key] += float(np.mean(flux)) * sub
             t += sub
@@ -207,7 +221,7 @@ class RichardsSolver3D:
     def mass_balance_error(self):
         """Storage change minus net boundary inflow since the start, cm (should be ~0)."""
         t = self.totals
-        net_in = t["infiltration"] - t["evaporation"] - t["drainage"]
+        net_in = t["infiltration"] - t["evaporation"] - t["drainage"] - t["transpiration"]
         return self.storage - self.initial_storage - net_in
 
     @property

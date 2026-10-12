@@ -22,13 +22,15 @@ class App:
     MAX_PLOT_POINTS = 1200
     MAX_TEXT_LINES = 5000
 
-    def __init__(self, root, records=None, source_name="synthetic weather", update_ms=UPDATE_MS):
+    def __init__(self, root, records=None, source_name="synthetic weather", update_ms=UPDATE_MS,
+                 irrigation=True):
         self.root = root
-        self.root.title(f"Continuous ET / Richards / TimesFM Dashboard: {source_name}")
+        field = "irrigated maize" if irrigation else "rainfed maize"
+        self.root.title(f"Continuous ET / Richards / TimesFM Dashboard: {source_name}, {field}")
         self.root.geometry("1500x900")
         self.root.protocol("WM_DELETE_WINDOW", self.close)
         self.update_ms = update_ms
-        self.sim = Simulation(records)
+        self.sim = Simulation(records, irrigation=irrigation)
         self.running = True
         self.after_id = None
         self.build_gui()
@@ -108,7 +110,8 @@ class App:
         self.ax.grid(True, alpha=0.25)
         plot_keys = [
             "ET_ASCE_PM",
-            "ET_PM_maize",
+            "ET_crop_potential",
+            "ET_crop_actual",
             "ET_Thornthwaite",
             "ET_Hargreaves",
             "ET_PriestleyTaylor",
@@ -166,12 +169,25 @@ class App:
             f"Priestley-Taylor α : {coeffs['pt_alpha']}\n"
             f"Jensen-Haise a     : {coeffs['jh_a']}\n"
             f"Blaney-Criddle a   : {coeffs['bc_a']}\n"
-            f"Blaney-Criddle b   : {coeffs['bc_b']}\n"
-            f"Maize Kc           : {coeffs['kc_maize']}\n\n"
+            f"Blaney-Criddle b   : {coeffs['bc_b']}\n\n"
         )
         self.text.insert(tk.END, "EQUATION RESULTS (mm/day unless noted)\n")
         for key, val in results.items():
             self.text.insert(tk.END, f"{key:25s}: {val:.6f}\n")
+        f = sim.field.last
+        season = "" if f["t"] is None else f", day {f['t']} of {sim.field.crop.season_length}"
+        self.text.insert(
+            tk.END,
+            f"\nMAIZE FIELD ({'irrigated' if sim.field.irrigation else 'rainfed'})\n"
+            f"Stage              : {f['stage']}{season}\n"
+            f"Kcb / Kc_max / fc  : {f['kcb']:.3f} / {f['kc_max']:.3f} / {f['fc']:.2f}\n"
+            f"Root depth         : {f['zr']:.2f} m\n"
+            f"Transpiration      : potential {f['tp']:.2f}, actual {f['ta']:.2f} mm/day\n"
+            f"Soil evaporation   : potential {f['ep']:.2f}, actual {f['ea']:.2f} mm/day\n"
+            f"Root-zone depletion: {f['dr']:.1f} of {f['taw']:.1f} mm available "
+            f"(irrigate at {sim.field.mad:.0%})\n"
+            f"Irrigation today   : {f['irrigation']:.1f} mm\n"
+        )
         flux = sim.richards.last_step
         self.text.insert(
             tk.END,
@@ -182,7 +198,7 @@ class App:
             f"Storage            : {10 * sim.richards.storage:.2f} mm\n"
             f"Today (mm)         : infiltration {10 * flux['infiltration']:.2f}, "
             f"evaporation {10 * flux['evaporation']:.2f}, drainage {10 * flux['drainage']:.3f}, "
-            f"runoff {10 * flux['runoff']:.2f}, ET deficit {10 * flux['evaporation_deficit']:.2f}\n"
+            f"runoff {10 * flux['runoff']:.2f}, transpiration {10 * flux['transpiration']:.2f}\n"
             f"Water balance error: {10 * sim.richards.mass_balance_error:.2e} mm "
             f"({flux['substeps']} sub-steps)\n\n"
         )
@@ -223,6 +239,8 @@ def main(argv=None):
                         help="use the synthetic weather generator instead of real data")
     parser.add_argument("--interval-ms", type=int, default=App.UPDATE_MS,
                         help="milliseconds between simulated days")
+    parser.add_argument("--irrigation", choices=("auto", "none"), default="auto",
+                        help="automatic irrigation of the maize field, or a rainfed field")
     args = parser.parse_args(argv)
     records, source_name = None, "synthetic weather"
     if not args.synthetic:
@@ -232,5 +250,5 @@ def main(argv=None):
         except FileNotFoundError:
             print(f"{args.data} not found; using synthetic weather.")
     root = tk.Tk()
-    App(root, records, source_name, args.interval_ms)
+    App(root, records, source_name, args.interval_ms, irrigation=args.irrigation == "auto")
     root.mainloop()

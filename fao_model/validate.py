@@ -23,6 +23,9 @@ from .calibration import Calibrator, LITERATURE_COEFFS
 from .et import compute_all, thornthwaite_heat_index, thornthwaite_monthly
 from .meteo import day_length
 from .metrics import compare
+from .plotting import (
+    AXIS, BLUE_DARK, BLUE_LIGHT, INK, INK_2, MUTED, SERIES, SURFACE, hide_unused, style,
+)
 
 METHODS = {
     "ET_Hargreaves": "Hargreaves",
@@ -46,16 +49,6 @@ COEFF_LABELS = {
 REPORT_DIR = Path(__file__).resolve().parent.parent / "reports" / "validation"
 SPLIT = "2015-01-01"
 MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"]
-
-# Figure colours: chart surface, ink, hairlines and categorical slots 1-2
-SURFACE = "#fcfcfb"
-INK = "#0b0b0b"
-INK_2 = "#52514e"
-MUTED = "#898781"
-GRID = "#e1e0d9"
-AXIS = "#c3c2b7"
-SERIES = ("#2a78d6", "#eb6834")
-BLUE_LIGHT, BLUE_DARK = "#86b6ef", "#1c5cab"
 
 
 def prepare(records, split):
@@ -102,30 +95,6 @@ def climatology(records, values):
 
 # ---------------------------------------------------------------- figures
 
-def _style(ax):
-    ax.set_facecolor(SURFACE)
-    ax.grid(True, color=GRID, linewidth=0.8)
-    ax.set_axisbelow(True)
-    for side in ("top", "right"):
-        ax.spines[side].set_visible(False)
-    for side in ("left", "bottom"):
-        ax.spines[side].set_color(AXIS)
-    ax.tick_params(colors=INK_2, labelsize=8)
-    ax.xaxis.label.set_color(INK_2)
-    ax.yaxis.label.set_color(INK_2)
-    ax.title.set_color(INK)
-
-
-def _hide_unused(axes, n_used):
-    """Hide empty panels and show x tick labels on the panels above them."""
-    ncols = axes.shape[1]
-    for i, ax in enumerate(axes.flat):
-        if i >= n_used:
-            ax.set_visible(False)
-        elif i + ncols >= n_used:
-            ax.tick_params(labelbottom=True)
-
-
 def scatter_grid(path, ref, panels, title, xlabel):
     """One panel per method: estimate against reference, with the 1:1 line."""
     ncols = 4
@@ -144,8 +113,8 @@ def scatter_grid(path, ref, panels, title, xlabel):
         ax.set_xlim(0, lim)
         ax.set_ylim(0, lim)
         ax.set_aspect("equal")
-        _style(ax)
-    _hide_unused(axes, len(panels))
+        style(ax)
+    hide_unused(axes, len(panels))
     fig.supxlabel(xlabel, color=INK_2, fontsize=9)
     fig.supylabel("Estimate (mm/day)", color=INK_2, fontsize=9)
     fig.suptitle(title, color=INK, fontsize=11)
@@ -166,7 +135,7 @@ def relative_bias_chart(path, rows):
     ax.axvline(0.0, color=INK_2, linewidth=1, zorder=0)
     ax.set_yticks(ys, [label for label, _, _ in rows])
     ax.set_xlabel("Relative bias against ASCE-PM, test period (%)")
-    _style(ax)
+    style(ax)
     ax.grid(False, axis="y")
     handles = [
         Line2D([], [], marker="o", linestyle="", markersize=8, color=BLUE_LIGHT, label="Literature coefficients"),
@@ -189,8 +158,8 @@ def climatology_chart(path, ref_clim, panels):
             ax.plot(x, cal, color=SERIES[1], linewidth=2, solid_capstyle="round")
         ax.set_title(label, fontsize=10)
         ax.set_xticks([1, 4, 7, 10], ["Jan", "Apr", "Jul", "Oct"])
-        _style(ax)
-    _hide_unused(axes, len(panels))
+        style(ax)
+    hide_unused(axes, len(panels))
     fig.supylabel("Mean ET (mm/day)", color=INK_2, fontsize=9)
     fig.suptitle("Mean seasonal cycle, test period", color=INK, fontsize=11)
     handles = [
@@ -210,7 +179,7 @@ def monthly_chart(path, months, ref, th):
     ax.plot(months, th, color=SERIES[1], linewidth=2, label="Thornthwaite, monthly")
     ax.set_ylabel("ET (mm/month)")
     ax.set_title("Thornthwaite on calendar months, test period", fontsize=11)
-    _style(ax)
+    style(ax)
     ax.legend(loc="upper center", bbox_to_anchor=(0.5, -0.1), ncol=2, fontsize=8,
               frameon=False, labelcolor=INK_2)
     fig.tight_layout()
