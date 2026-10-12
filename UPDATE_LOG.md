@@ -1,5 +1,102 @@
 # Update log
 
+## 03 (2026-10-12)
+
+Pull requests #2 and #3. The constant maize Kc became a crop water balance:
+FAO-56 dual crop coefficients, root water uptake in the Richards solver, and
+automatic irrigation. Results are compared with pyfao56 and ERA5 soil moisture.
+
+### Documentation
+
+- The setup instructions no longer assume Linux: they show how to create and
+  activate a virtual environment on Windows, macOS and Linux (#2).
+
+### Crop
+
+`fao_model/crop.py` holds grain maize parameters from FAO-56:
+
+| Item | Source | Value |
+|---|---|---|
+| Stage lengths, planted 1 May | Table 11 | 30/40/50/30 days |
+| Crop height | Table 12 | up to 2 m |
+| Kcb | Table 17 | 0.15 / 1.15 / 0.15 |
+| Rooting depth | Table 22 | 0.15–1.2 m |
+| Depletion fraction p | Table 22 | 0.55 |
+| Feddes thresholds for corn | Wesseling (1991) | |
+
+It computes:
+- the daily Kcb, crop height and rooting depth;
+- Kc_max (FAO-56 eq. 72) and canopy cover (eq. 76);
+- potential transpiration Kcb·ETo and soil evaporation Ke·ETo;
+- the site adjustment of Kcb_mid (eq. 70); for Konya it is 1.236.
+
+Kcb, crop height, rooting depth, Kc_max and canopy cover match pyfao56 day by
+day in the tests.
+
+### Soil water
+
+- **Root uptake:** the Richards solver takes a sink term. Potential
+  transpiration is spread over the root zone with root density falling linearly
+  to the root tip, and reduced by the Feddes stress factor. Transpiration and its
+  deficit are part of the water balance, which still closes to rounding.
+- **Field model:** `fao_model/field.py` runs crop, soil and irrigation day by
+  day:
+  - the soil is a 1.5 m column in 2.5 cm layers;
+  - field capacity is at −100 cm (θ = 0.227), wilting point θ = 0.061;
+  - with irrigation on, the root zone is refilled to field capacity whenever 55 %
+    of its available water is used.
+- **Top layer thickness:** 5 cm layers gave about 30 % more soil evaporation
+  than 2.5 cm layers.
+
+### Dashboard
+
+- The constant maize Kc of 0.35 (`ET_PM_maize`, `kc_maize`) is gone. The
+  dashboard now shows potential and actual crop ET, the crop stage, Kcb,
+  rooting depth, transpiration, evaporation, root-zone depletion and
+  irrigation.
+- `--irrigation auto|none` chooses irrigated or rainfed maize.
+- The dashboard soil is the 1.5 m column on a 5 × 5 × 60 grid.
+
+### Water balance report
+
+`python -m fao_model.water_balance` writes `reports/water_balance/`. Seasons
+1995–2024, means:
+
+| | Rainfed | Irrigated |
+|---|---|---|
+| Rain | 51 mm | 51 mm |
+| Irrigation | 0 | 821 mm (14.5 times) |
+| Actual / potential transpiration | 56 / 722 mm | 667 / 722 mm |
+| Actual / potential soil evaporation | 42 / 398 mm | 205 / 398 mm |
+
+- **pyfao56:** the FAO-56 bucket model, given the same inputs and this model's
+  soil profile on each planting day. For the irrigated scenario it gives
+  transpiration 696 mm, evaporation 201 mm and irrigation 854 mm (14.8 times).
+  Single seasons differ more than the means, because irrigation comes in refills
+  of up to about 110 mm.
+- **ERA5 0–7 cm soil moisture:** the simulated topsoil follows it with daily
+  r = 0.80 and monthly-cycle r = 0.97, and is 0.07 m³/m³ drier.
+
+### Behaviour changes
+
+- `et.compute_all` no longer returns `ET_PM_maize`, and the calibration
+  coefficients no longer include `kc_maize`. The simulation reports
+  `ET_crop_potential` and `ET_crop_actual` instead.
+- `Simulation(records, irrigation=True, crop=None)`; `sim.field` is the field
+  model and `sim.richards` its soil.
+- `RichardsSolver3D.step` accepts `tp`, `root_weights` and `alpha` for root
+  uptake. Its totals include `transpiration` and `transpiration_deficit`.
+- `data.load` records include `SM_0_7cm` (ERA5 soil moisture).
+- New optional dependencies for the comparison: `pip install -e ".[validation]"`
+  (pandas, pyfao56). The `dev` extra includes them.
+
+### Items addressed from the 01 notes
+
+| 01 note | Done in 03 |
+|---|---|
+| A root uptake function should be added to program. | Feddes uptake with a linearly decreasing root density; roots grow with the crop. |
+| The soil and plant data could be researched to add more realistic parameters and constants. | Partly: maize parameters from FAO-56 and Wesseling (1991). The soil is unchanged. |
+
 ## 02 (2026-10-09)
 
 Pull request #1. The single-file program became a tested Python package that
