@@ -90,7 +90,8 @@ def load(path=DEFAULT_CSV):
     """Read a CSV written by write_csv; returns (metadata, daily records).
 
     Records use the model's keys and units: T_mean = (T_max + T_min) / 2
-    as in FAO-56, wind converted to 2 m, pressure in kPa.
+    as in FAO-56, wind converted to 2 m, pressure in kPa; SM_0_7cm is the
+    ERA5 0-7 cm soil moisture (m3/m3) or None.
     """
     meta, lines = {}, []
     with open(path, newline="") as f:
@@ -122,6 +123,7 @@ def load(path=DEFAULT_CSV):
             "P": float(row["P_hPa"]) / 10.0,
             "precip": float(row["precip"]),
             "ET0_ref": float(row["ET0_openmeteo"]),
+            "SM_0_7cm": float(row["soil_moisture_0_7cm"]) if row.get("soil_moisture_0_7cm") else None,
         })
     return meta, records
 
