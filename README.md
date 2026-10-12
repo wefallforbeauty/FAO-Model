@@ -19,20 +19,34 @@ version: [UPDATE_LOG.md](UPDATE_LOG.md).
 
 ## Quick start
 
-```bash
-python3 -m venv .venv
-.venv/bin/pip install -e ".[dev]"                 # numpy, matplotlib, pytest
-.venv/bin/python -m fao_model                     # dashboard, replays the Konya record
-.venv/bin/python -m fao_model --synthetic         # synthetic daily weather instead
-.venv/bin/python -m fao_model --interval-ms 200   # faster replay (default 1000 ms per day)
-.venv/bin/python -m fao_model.validate            # regenerates reports/validation/
-.venv/bin/python -m fao_model.data --help         # download another site or period
-.venv/bin/python -m pytest
+Requires Python 3.10 or newer with Tk support. The python.org installers for
+Windows and macOS include Tk; some Linux distributions ship it as a separate
+package (for example `python3-tk`).
+
+Create a virtual environment and install the package with its development tools:
+
+```sh
+python -m venv .venv
+# Activate it
+#   Windows (PowerShell):  .venv\Scripts\Activate.ps1
+#   macOS and Linux:       source .venv/bin/activate
+pip install -e ".[dev]"                 # numpy, matplotlib, pytest
 ```
 
-The live graph needs matplotlib with Tk support. If the dashboard reports that
-`ImageTk` is missing (system Pillow on Fedora), install `python3-pillow-tk`, or
-run `pip install --ignore-installed pillow` inside the venv.
+With the environment active:
+
+```sh
+python -m fao_model                     # dashboard, replays the Konya record
+python -m fao_model --synthetic         # synthetic daily weather instead
+python -m fao_model --interval-ms 200   # faster replay (default 1000 ms per day)
+python -m fao_model.validate            # regenerates reports/validation/
+python -m fao_model.data --help         # download another site or period
+pytest
+```
+
+On systems where `python` points to Python 2 or is missing, use `python3`.
+If the dashboard cannot draw the live graph, it shows the import error that
+names the missing piece, usually Tk support in Python or in Pillow.
 
 ## Layout
 

@@ -27,7 +27,7 @@ reasonably well.
 
 Regenerate it, or download another site or period:
 
-```bash
+```sh
 python -m fao_model.data                       # this file
 python -m fao_model.data --lat 36.9 --lon 39.0 --name "Harran Plain" \
     --start 2000-01-01 --end 2024-12-31 --out data/harran.csv
