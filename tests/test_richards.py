@@ -94,3 +94,23 @@ def test_wetting_front_enters_dry_soil():
     assert np.all(s.theta < s.params["theta_s"])
     assert s.theta[0, 0, 2] > theta_start[0, 0, 2] + 0.01
     assert abs(s.mass_balance_error) < 1e-9
+
+
+def test_root_uptake_takes_potential_transpiration_from_rooted_layers():
+    s = RichardsSolver3D(nx=1, ny=1, nz=10, h_init=-100.0)
+    weights = np.array([0.4, 0.3, 0.2, 0.1, 0, 0, 0, 0, 0, 0])
+    theta_start = s.theta.copy()
+    out = s.step(0.0, dt=0.5, tp=0.4, root_weights=weights, alpha=lambda h: np.ones_like(h))
+    assert out["transpiration"] == pytest.approx(0.2)
+    assert out["transpiration_deficit"] == pytest.approx(0.0, abs=1e-12)
+    assert abs(s.mass_balance_error) < 1e-12
+    assert np.all(s.theta[0, 0, :4] < theta_start[0, 0, :4])
+
+
+def test_no_uptake_from_soil_drier_than_the_stress_limit():
+    s = RichardsSolver3D(nx=1, ny=1, nz=10, h_init=-12000.0)
+    weights = np.full(10, 0.1)
+    out = s.step(0.0, dt=1.0, tp=0.5, root_weights=weights,
+                 alpha=lambda h: np.where(h > -8000.0, 1.0, 0.0))
+    assert out["transpiration"] == pytest.approx(0.0, abs=1e-6)
+    assert out["transpiration_deficit"] == pytest.approx(0.5, abs=1e-6)
