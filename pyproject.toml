@@ -12,7 +12,7 @@ dependencies = ["numpy"]
 
 [project.optional-dependencies]
 gui = ["matplotlib"]
-forecast = ["timesfm"]
+forecast = ["timesfm", "torch"]
 validation = ["pandas", "pyfao56"]
 dev = ["pytest", "matplotlib", "pandas", "pyfao56"]
 

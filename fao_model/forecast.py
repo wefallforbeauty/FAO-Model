@@ -1,80 +1,199 @@
-import math
+"""Daily weather forecasts: TimesFM 2.5 when installed, otherwise a statistical baseline.
 
+The weather inputs (temperature, humidity, wind, radiation, rain) are
+forecast one variable at a time, and reference ET for the coming days is
+computed from the forecast weather with ASCE-PM, so it follows the same
+physics as the rest of the model. TimesFM also forecasts the ETo series
+directly, which gives quantiles for an uncertainty band.
+
+The baseline is climatology plus today's anomaly decaying with its lag-1
+autocorrelation (damped anomaly persistence), the usual reference for
+daily weather forecasts.
+"""
 import numpy as np
 
-try:
-    from timesfm import TimesFm, TimesFmHparams
-    TIMESFM_AVAILABLE = True
-except Exception:
-    TIMESFM_AVAILABLE = False
+from .et import asce_pm
+from .meteo import extraterrestrial_radiation
+
+WEATHER = ("T_max", "T_min", "RH_max", "RH_min", "u2", "Rs", "precip")
+HORIZON = 14                    # days
+CONTEXT = 1024                  # days of history TimesFM sees
+TIMESFM_REPO = "google/timesfm-2.5-200m-pytorch"
 
 
-class Forecaster:
-    CONTEXT_LEN = 2048
-    HORIZON_LEN = 96
+def add_eto(records):
+    """Copies of the records with their ASCE-PM reference ET under "ETo"."""
+    return [dict(d, ETo=asce_pm(d)) for d in records]
 
-    def __init__(self):
+
+def _doy(d):
+    return d["timestamp"].timetuple().tm_yday
+
+
+class Climatology:
+    """Smoothed day-of-year mean of each variable and the lag-1 autocorrelation of its anomalies."""
+
+    def __init__(self, records, keys=WEATHER + ("ETo",), half_window=15):
+        if len(records) < 365:
+            raise ValueError("a climatology needs at least a year of daily records")
+        doy = np.array([_doy(d) for d in records])
+        self.means, self.phi = {}, {}
+        for key in keys:
+            values = np.array([d[key] for d in records], dtype=float)
+            mean = np.empty(367)
+            for day in range(1, 367):
+                distance = np.abs(doy - day)
+                distance = np.minimum(distance, 366 - distance)
+                mean[day] = values[distance <= half_window].mean()
+            mean[0] = mean[1]
+            anomaly = values - mean[doy]
+            self.means[key] = mean
+            phi = np.corrcoef(anomaly[:-1], anomaly[1:])[0, 1] if anomaly.std() > 0 else 0.0
+            self.phi[key] = float(np.clip(phi, 0.0, 0.99))
+
+    def mean(self, key, doy):
+        return self.means[key][doy]
+
+
+def _future_doys(last_doy, horizon):
+    return [(last_doy + k - 1) % 365 + 1 for k in range(1, horizon + 1)]
+
+
+class WeatherForecaster:
+    """Forecasts the weather inputs and reference ET for the next `horizon` days.
+
+    backend: "timesfm" (fail if it cannot load), "baseline", or "auto"
+    (TimesFM when the package and model load, else the baseline).
+    """
+
+    def __init__(self, climatology, backend="auto", horizon=HORIZON, context=CONTEXT, batch_size=8):
+        self.climatology = climatology
+        self.horizon = horizon
+        self.context = context
         self.model = None
-        self.timesfm = False
-        self.status = "TimesFM unavailable; using dynamic fallback."
-        if TIMESFM_AVAILABLE:
+        self.status = "Baseline: climatology plus damped anomaly persistence."
+        if backend in ("auto", "timesfm"):
             try:
-                hparams = TimesFmHparams(
-                    context_len=self.CONTEXT_LEN,
-                    horizon_len=self.HORIZON_LEN,
-                    input_patch_len=32,
-                    output_patch_len=128,
-                    num_layers=20,
-                    model_dims=1280,
-                )
-                self.model = TimesFm(hparams)
-                self.model.load_from_checkpoint(repo_id="google/timesfm-1.0-200m")
-                self.timesfm = True
-                self.status = f"TimesFM active: context {self.CONTEXT_LEN}, horizon {self.HORIZON_LEN}"
+                self.model = TimesFM(context, horizon, batch_size)
+                self.status = f"TimesFM 2.5 (200M), {context}-day context, {horizon}-day horizon."
             except Exception as exc:
-                self.model = None
-                self.timesfm = False
-                self.status = f"TimesFM init failed ({type(exc).__name__}); using fallback."
+                if backend == "timesfm":
+                    raise
+                self.status = (f"TimesFM not available ({type(exc).__name__}); "
+                               "baseline: climatology plus damped anomaly persistence.")
 
-    def _fallback(self, series, steps):
-        if not series:
-            return [0.0] * steps
-        if len(series) == 1:
-            return [float(series[-1])] * steps
-        n = min(len(series), self.CONTEXT_LEN)
-        y = np.asarray(series[-n:], dtype=float)
-        x = np.arange(n, dtype=float)
-        w = max(5, min(96, n // 8))
-        recent = float(np.mean(y[-w:]))
-        older = float(np.mean(y[max(0, n - 2*w):-w])) if n > w else recent
-        slope = (recent - older) / max(1.0, w)
-        level = float(np.mean(y))
-        out = []
-        last = float(y[-1])
-        for k in range(1, steps + 1):
-            trend = last + slope * k
-            decay = math.exp(-k / max(12.0, steps / 2.0))
-            value = level + (trend - level) * decay
-            out.append(float(value))
+    def forecast_at(self, records, origins):
+        """Forecasts issued at the end of each day records[i], i in origins, for days i+1..i+horizon.
+
+        records need the weather variables and "ETo" (see add_eto). Returns a
+        dict of arrays shaped (len(origins), horizon): every weather variable,
+        "ETo" computed from the forecast weather, "ETo_direct" (the ETo series
+        forecast itself), "precip_mean" (expected rain; the "precip" point
+        forecast of TimesFM is a median, mostly 0 on a dry climate) and, with
+        TimesFM, "ETo_q10" and "ETo_q90".
+        """
+        keys = WEATHER + ("ETo",)
+        series = {k: np.array([d[k] for d in records], dtype=float) for k in keys}
+        origins = list(origins)
+        if self.model is None:
+            out = self._baseline(records, series, origins, keys)
+            out["precip_mean"] = out["precip"].copy()
+        else:
+            contexts = [series[k][max(0, i + 1 - self.context): i + 1] for i in origins for k in keys]
+            points, quantiles = self.model.forecast(contexts, self.horizon)
+            n = len(keys)
+            out = {k: points[j::n] for j, k in enumerate(keys)}
+            out["ETo_q10"] = quantiles[keys.index("ETo")::n, :, 1]
+            out["ETo_q90"] = quantiles[keys.index("ETo")::n, :, 9]
+            out["precip_mean"] = np.maximum(quantiles[keys.index("precip")::n, :, 0], 0.0)
+        out["ETo_direct"] = out.pop("ETo")
+        _make_consistent(out, [records[i] for i in origins])
+        out["ETo"] = np.array([
+            _eto_from_weather(records[i], {k: out[k][j] for k in WEATHER})
+            for j, i in enumerate(origins)
+        ])
         return out
 
-    def forecast(self, series, steps=None):
-        steps = int(steps or self.HORIZON_LEN)
-        steps = max(1, min(steps, self.HORIZON_LEN))
-        if self.timesfm and len(series) >= 32:
-            try:
-                context = np.asarray(series[-self.CONTEXT_LEN:], dtype=np.float32)
-                fc = self.model.forecast(context, horizon_len=steps)
-                # Different releases return arrays, tuples, or (forecast, ...).
-                if isinstance(fc, tuple):
-                    fc = fc[0]
-                fc = np.asarray(fc, dtype=float).reshape(-1)
-                if len(fc) >= steps and np.all(np.isfinite(fc[:steps])):
-                    return fc[:steps].tolist()
-            except Exception:
-                pass
-        return self._fallback(series, steps)
+    def rain_totals(self, records, origins, days):
+        """Expected rain (mm) over days i+1..i+days for each origin i; cheaper than forecast_at."""
+        rain = np.array([d["precip"] for d in records], dtype=float)
+        origins = list(origins)
+        if self.model is None:
+            out = self._baseline(records, {"precip": rain}, origins, ("precip",))["precip"]
+        else:
+            contexts = [rain[max(0, i + 1 - self.context): i + 1] for i in origins]
+            out = self.model.forecast(contexts, self.horizon)[1][:, :, 0]
+        return np.maximum(out[:, :days], 0.0).sum(axis=1)
 
-    def forecast_all(self, history, steps=None):
-        steps = steps or self.HORIZON_LEN
-        return {key: self.forecast(series, steps) for key, series in history.items()}
+    def _baseline(self, records, series, origins, keys):
+        clim = self.climatology
+        out = {k: np.empty((len(origins), self.horizon)) for k in keys}
+        lead = np.arange(1, self.horizon + 1)
+        for j, i in enumerate(origins):
+            doy0 = _doy(records[i])
+            doys = _future_doys(doy0, self.horizon)
+            for k in keys:
+                anomaly = series[k][i] - clim.mean(k, doy0)
+                out[k][j] = clim.means[k][doys] + anomaly * clim.phi[k] ** lead
+        return out
+
+
+def _make_consistent(fc, lasts):
+    """Repair what independent univariate forecasts can get wrong, in place."""
+    lo, hi = np.minimum(fc["T_min"], fc["T_max"]), np.maximum(fc["T_min"], fc["T_max"])
+    fc["T_min"], fc["T_max"] = lo, hi
+    rh_lo = np.clip(np.minimum(fc["RH_min"], fc["RH_max"]), 1.0, 100.0)
+    rh_hi = np.clip(np.maximum(fc["RH_min"], fc["RH_max"]), 1.0, 100.0)
+    fc["RH_min"], fc["RH_max"] = rh_lo, rh_hi
+    fc["u2"] = np.maximum(fc["u2"], 0.0)
+    fc["precip"] = np.maximum(fc["precip"], 0.0)
+    for j, last in enumerate(lasts):
+        doys = _future_doys(_doy(last), fc["Rs"].shape[1])
+        rso = np.array([(0.75 + 2e-5 * last["elev"]) * extraterrestrial_radiation(last["lat"], d) for d in doys])
+        fc["Rs"][j] = np.clip(fc["Rs"][j], 0.0, rso)
+
+
+def _eto_from_weather(last, weather):
+    """ASCE-PM reference ET (mm/day) for each forecast day."""
+    doys = _future_doys(_doy(last), len(weather["T_max"]))
+    eto = []
+    for k, doy in enumerate(doys):
+        d = {key: float(weather[key][k]) for key in WEATHER}
+        d.update(T_mean=(d["T_max"] + d["T_min"]) / 2.0, RH_mean=(d["RH_max"] + d["RH_min"]) / 2.0,
+                 P=last["P"], lat=last["lat"], elev=last["elev"], doy=doy)
+        eto.append(asce_pm(d))
+    return eto
+
+
+class TimesFM:
+    """TimesFM 2.5 (200M parameters, PyTorch): zero-shot forecasts of many series at once.
+
+    Needs the optional `timesfm` and `torch` packages; the weights (~1 GB) are
+    downloaded from Hugging Face on first use.
+    """
+
+    def __init__(self, context=CONTEXT, horizon=HORIZON, batch_size=8):
+        import timesfm
+
+        self._timesfm = timesfm
+        self.model = timesfm.TimesFM_2p5_200M_torch.from_pretrained(TIMESFM_REPO)
+        self.compile(context, horizon, batch_size)
+
+    def compile(self, context, horizon, batch_size):
+        """(Re)compile for another context length or batch size without reloading the weights."""
+        self.model.compile(self._timesfm.ForecastConfig(
+            max_context=context,
+            max_horizon=horizon,
+            normalize_inputs=True,
+            use_continuous_quantile_head=True,
+            force_flip_invariance=True,
+            infer_is_positive=True,
+            fix_quantile_crossing=True,
+            per_core_batch_size=batch_size,
+        ))
+
+    def forecast(self, series, horizon):
+        """Median forecasts (n, horizon) and quantiles (n, horizon, 10): mean, then 0.1 ... 0.9."""
+        # TimesFM pads the list it is given in place, so pass a fresh one.
+        points, quantiles = self.model.forecast(horizon=horizon, inputs=[np.asarray(s, dtype=float) for s in series])
+        return np.asarray(points, dtype=float), np.asarray(quantiles, dtype=float)
