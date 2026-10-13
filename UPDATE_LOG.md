@@ -1,5 +1,93 @@
 # Update log
 
+## 04 (2026-10-13)
+
+Pull request #4. The forecasts now work and are scored. 01 called a TimesFM
+API that no current release has and silently fell back; 04 forecasts the
+weather inputs with TimesFM 2.5, computes reference ET from them, measures the
+skill against what happened, and lets irrigation wait for forecast rain.
+
+### Forecasts
+
+`fao_model/forecast.py` is rewritten:
+
+- **What is forecast:** the seven weather inputs, 1–14 days ahead, one variable
+  at a time. Reference ET for those days is computed from the forecast weather
+  with ASCE-PM. The ETo series is also forecast directly, with 10–90 %
+  quantiles.
+- **Rain:** for rain both the median and the expected (mean) amount are kept;
+  the median is 0 on most days of a dry climate.
+- **Physical consistency:** the univariate forecasts are made consistent
+  (T_min ≤ T_max, humidity within 0–100 % and ordered, Rs ≤ clear-sky Rs).
+- **Backends:**
+  - TimesFM 2.5, 200M parameters, Apache-2.0 weights
+    `google/timesfm-2.5-200m-pytorch`, 1024 days of history;
+  - without TimesFM, climatology plus damped anomaly persistence.
+
+### Forecast skill report
+
+`python -m fao_model.forecast_skill` issues forecasts every 7 days of 2015–2024
+(520 forecasts, using only data up to each issue day) and compares them with
+climatology and persistence.
+
+| Reference ET error (mm/day) | 1 day | 3 days | 7 days |
+|---|---|---|---|
+| Climatology | 0.58 | 0.55 | 0.58 |
+| TimesFM 2.5 | 0.40 | 0.52 | 0.58 |
+| Damped anomaly persistence | 0.40 | 0.51 | 0.57 |
+| Persistence | 0.45 | 0.65 | 0.79 |
+
+- TimesFM is slightly better than the baseline for minimum temperature and
+  humidity at a week.
+- No method caught any of the 32 cases with ≥ 10 mm of rain in three days.
+- TimesFM's 10–90 % interval holds 78–84 % of observations (80 % is ideal).
+- 1024 days of history are enough; 2048 gave the same errors.
+- Rain is not scored by daily absolute error: that score rewards forecasting
+  the median, which is 0 on most days, so a median forecast would look
+  skilful. Rain is scored as 3-day amounts and events instead.
+
+### Irrigation with rain forecasts
+
+- `FieldModel` can postpone a due irrigation when at least 10 mm of rain is
+  forecast for the next three days, unless 75 % of the available water is
+  already used.
+- New section 6 of the water balance report compares, for 2015–2024: no
+  forecast, a perfect forecast, TimesFM and the baseline. All start from the
+  same soil state.
+- **Result:** in-season rain is too rare for postponing to save water. A perfect
+  forecast avoids the 3 irrigations that were followed by rain, but uses as much
+  water over the season (820 against 818 mm). TimesFM and the baseline never
+  postponed.
+
+### Dashboard
+
+- **Forecast cadence:** a forecast is issued weekly with TimesFM (about a second
+  on a CPU), daily with the baseline. Options: `--forecaster
+  auto|timesfm|baseline` and `--forecast-every`.
+- **Plot:**
+  - the last 120 days of reference and maize ET, with the other ET equations in
+    grey;
+  - the latest ETo forecast with TimesFM's 10–90 % band;
+  - rain, expected rain and irrigation days below.
+- **Log:** a 7-day forecast table replaces the 96-day dump of every series.
+
+### Behaviour changes
+
+- `Simulation.step()` returns the latest forecast as a dict (weather variables,
+  `ETo`, `ETo_direct`, `precip_mean`, and with TimesFM `ETo_q10` and `ETo_q90`;
+  plus `issued` and `step`) instead of forecasts of every result series.
+- New `Simulation` options: `forecaster=`, `forecast_every=` and
+  `climatology=`. A climatology needs at least a year of records.
+- `pip install -e ".[forecast]"` installs timesfm and torch. TimesFM results
+  are cached in `output/cache/` (not in Git).
+
+### Items addressed from the notes
+
+| Note | Done in 04 |
+|---|---|
+| Then the timesfm forecast should be applicable weather data. | TimesFM 2.5 forecasts the weather inputs, and reference ET is computed from them; the skill is measured. |
+| Both the forecast data and the solutions should be an input for another optimization process. | Partly: forecasts drive a postpone-before-rain irrigation rule, compared with a perfect forecast. There is no optimization yet. |
+
 ## 03 (2026-10-12)
 
 Pull requests #2 and #3. The constant maize Kc became a crop water balance:
