@@ -1,12 +1,13 @@
 import argparse
 import tkinter as tk
+from datetime import timedelta
 from tkinter import ttk
 
-import numpy as np
-
 try:
+    import matplotlib.dates as mdates
     from matplotlib.figure import Figure
     from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
+    from .plotting import BLUE_LIGHT, INK_2, MUTED, SERIES, SURFACE, style
     MATPLOTLIB_AVAILABLE = True
     MATPLOTLIB_ERROR = ""
 except Exception as exc:     # e.g. matplotlib missing, or Pillow without ImageTk
@@ -19,18 +20,19 @@ from .simulation import Simulation
 
 class App:
     UPDATE_MS = 1000
-    MAX_PLOT_POINTS = 1200
+    PLOT_DAYS = 120
     MAX_TEXT_LINES = 5000
 
     def __init__(self, root, records=None, source_name="synthetic weather", update_ms=UPDATE_MS,
-                 irrigation=True):
+                 irrigation=True, forecaster="auto", forecast_every=None):
         self.root = root
         field = "irrigated maize" if irrigation else "rainfed maize"
         self.root.title(f"Continuous ET / Richards / TimesFM Dashboard: {source_name}, {field}")
         self.root.geometry("1500x900")
         self.root.protocol("WM_DELETE_WINDOW", self.close)
         self.update_ms = update_ms
-        self.sim = Simulation(records, irrigation=irrigation)
+        self.sim = Simulation(records, irrigation=irrigation, forecaster=forecaster,
+                              forecast_every=forecast_every)
         self.running = True
         self.after_id = None
         self.build_gui()
@@ -49,20 +51,17 @@ class App:
         self.text.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
         scroll.pack(side=tk.RIGHT, fill=tk.Y)
         if MATPLOTLIB_AVAILABLE:
-            self.figure = Figure(figsize=(11, 7), dpi=100)
-            self.ax = self.figure.add_subplot(111)
-            self.ax.set_title("Live ET equations and TimesFM forecasts")
-            self.ax.set_xlabel("Day")
-            self.ax.set_ylabel("ET / forecast value (mm/day)")
-            self.ax.grid(True, alpha=0.25)
+            self.figure = Figure(figsize=(11, 7), dpi=100, facecolor=SURFACE)
+            self.ax, self.ax_rain = self.figure.subplots(
+                2, 1, sharex=True, gridspec_kw={"height_ratios": (3, 1)})
             self.canvas = FigureCanvasTkAgg(self.figure, master=right)
             self.canvas.get_tk_widget().pack(fill=tk.BOTH, expand=True)
             controls = ttk.Frame(right)
             controls.pack(fill=tk.X, pady=4)
             ttk.Label(
                 controls,
-                text="Plot: last %d historical points + %d-step forecast" %
-                     (self.MAX_PLOT_POINTS, self.sim.forecaster.HORIZON_LEN)
+                text=f"Plot: last {self.PLOT_DAYS} days and the latest "
+                     f"{self.sim.forecaster.horizon}-day forecast. {self.sim.forecaster.status}"
             ).pack(side=tk.LEFT)
         else:
             ttk.Label(
@@ -100,36 +99,47 @@ class App:
     def update_plot(self):
         if not MATPLOTLIB_AVAILABLE:
             return
-        self.ax.clear()
-        self.ax.set_title(
-            "Live historical equations + long TimesFM forecast "
-            f"(day {self.sim.step_number})"
-        )
-        self.ax.set_xlabel("Day")
-        self.ax.set_ylabel("Value")
-        self.ax.grid(True, alpha=0.25)
-        plot_keys = [
-            "ET_ASCE_PM",
-            "ET_crop_potential",
-            "ET_crop_actual",
-            "ET_Thornthwaite",
-            "ET_Hargreaves",
-            "ET_PriestleyTaylor",
-        ]
-        for key in plot_keys:
-            series = self.sim.history.get(key, [])
-            if not series:
-                continue
-            start = max(0, len(series) - self.MAX_PLOT_POINTS)
-            y = np.asarray(series[start:], dtype=float)
-            x = np.arange(start + 1, len(series) + 1)
-            self.ax.plot(x, y, linewidth=1.2, label=key)
-            fc = self.sim.forecasts.get(key, [])
-            if fc:
-                fx = np.arange(len(series) + 1, len(series) + len(fc) + 1)
-                self.ax.plot(fx, fc, linestyle="--", linewidth=1.1,
-                             label=f"{key} forecast")
-        self.ax.legend(loc="upper left", fontsize=7, ncol=2)
+        sim = self.sim
+        days = sim.data_history[-self.PLOT_DAYS:]
+        fields = sim.field_history[-self.PLOT_DAYS:]
+        n = len(days)
+        dates = [d["timestamp"] for d in days]
+        ax, axr = self.ax, self.ax_rain
+        ax.clear()
+        axr.clear()
+        for i, key in enumerate(("ET_Hargreaves", "ET_PriestleyTaylor", "ET_Thornthwaite")):
+            ax.plot(dates, sim.history[key][-n:], color=MUTED, linewidth=0.8,
+                    label="Other ET equations" if i == 0 else None)
+        ax.plot(dates, sim.history["ET_ASCE_PM"][-n:], color=SERIES[0], linewidth=1.8,
+                label="Reference ET (ASCE-PM)")
+        ax.plot(dates, sim.history["ET_crop_actual"][-n:], color=SERIES[1], linewidth=1.8,
+                label="Maize ET, actual")
+        fc = sim.forecast
+        ahead = [fc["issued"] + timedelta(days=k) for k in range(1, len(fc["ETo"]) + 1)]
+        if "ETo_q10" in fc:
+            ax.fill_between(ahead, fc["ETo_q10"], fc["ETo_q90"], color=BLUE_LIGHT, alpha=0.5,
+                            linewidth=0, label="TimesFM 10-90 % range")
+        ax.plot(ahead, fc["ETo"], color=SERIES[0], linewidth=1.8, linestyle="--",
+                label=f"Forecast issued {fc['issued']:%d %b %Y}")
+        for a in (ax, axr):
+            a.axvline(fc["issued"], color=INK_2, linewidth=1)
+            style(a)
+        ax.set_ylabel("ET (mm/day)")
+        ax.set_title(f"Day {sim.step_number}: evapotranspiration and the latest forecast", fontsize=10)
+        axr.bar(dates, [d["precip"] for d in days], width=0.8, color=SERIES[0], label="Rain")
+        axr.bar(ahead, fc["precip_mean"], width=0.8, color=BLUE_LIGHT, label="Expected rain (forecast)")
+        top = max([1.0] + [d["precip"] for d in days] + list(fc["precip_mean"])) * 1.15
+        irrigated = [d for d, f in zip(dates, fields) if f["irrigation"] > 0]
+        axr.scatter(irrigated, [top * 0.9] * len(irrigated), marker="v", s=30, color=SERIES[1],
+                    label="Irrigation day")
+        axr.set_ylim(0, top)
+        axr.set_ylabel("Rain (mm/day)")
+        # One legend for both panels, where the ET panel has room (its winter values are low).
+        handles = ax.get_legend_handles_labels()[0] + axr.get_legend_handles_labels()[0]
+        ax.legend(handles=handles, loc="upper left", fontsize=7, frameon=False, labelcolor=INK_2, ncol=2)
+        locator = mdates.AutoDateLocator()
+        axr.xaxis.set_major_locator(locator)
+        axr.xaxis.set_major_formatter(mdates.ConciseDateFormatter(locator))
         self.figure.tight_layout()
         self.canvas.draw_idle()
 
@@ -202,18 +212,21 @@ class App:
             f"Water balance error: {10 * sim.richards.mass_balance_error:.2e} mm "
             f"({flux['substeps']} sub-steps)\n\n"
         )
+        issued = forecasts["issued"]
+        band = "ETo_q10" in forecasts
         self.text.insert(
             tk.END,
-            f"TIMESFM STATUS\n{sim.forecaster.status}\n"
-            f"Context length    : {sim.forecaster.CONTEXT_LEN}\n"
-            f"Forecast horizon  : {sim.forecaster.HORIZON_LEN} days\n\n"
+            f"FORECAST issued {issued:%Y-%m-%d} (a new one every {sim.forecast_every} days)\n"
+            f"{sim.forecaster.status}\n"
+            "date         T_max  T_min   rain    ETo" + ("   10-90 %" if band else "") + "\n"
         )
-        self.text.insert(tk.END, "FORECASTS\n")
-        for key, fc in forecasts.items():
-            if key.startswith("Richards_"):
-                continue
-            values = ", ".join(f"{v:.3f}" for v in fc)
-            self.text.insert(tk.END, f"{key:25s}: {values}\n")
+        for k in range(min(7, len(forecasts["ETo"]))):
+            day = issued + timedelta(days=k + 1)
+            row = (f"{day:%Y-%m-%d}  {forecasts['T_max'][k]:5.1f}  {forecasts['T_min'][k]:5.1f}  "
+                   f"{forecasts['precip_mean'][k]:5.1f}  {forecasts['ETo'][k]:5.2f}")
+            if band:
+                row += f"  {forecasts['ETo_q10'][k]:4.1f}-{forecasts['ETo_q90'][k]:.1f}"
+            self.text.insert(tk.END, row + "\n")
         self.text.insert(
             tk.END,
             f"\nTOTAL RETAINED WEATHER SAMPLES : {len(sim.data_history)}\n"
@@ -241,6 +254,10 @@ def main(argv=None):
                         help="milliseconds between simulated days")
     parser.add_argument("--irrigation", choices=("auto", "none"), default="auto",
                         help="automatic irrigation of the maize field, or a rainfed field")
+    parser.add_argument("--forecaster", choices=("auto", "timesfm", "baseline"), default="auto",
+                        help="TimesFM 2.5 if installed (auto), or the statistical baseline")
+    parser.add_argument("--forecast-every", type=int, default=None,
+                        help="days between forecasts (default 7 with TimesFM, else 1)")
     args = parser.parse_args(argv)
     records, source_name = None, "synthetic weather"
     if not args.synthetic:
@@ -250,5 +267,6 @@ def main(argv=None):
         except FileNotFoundError:
             print(f"{args.data} not found; using synthetic weather.")
     root = tk.Tk()
-    App(root, records, source_name, args.interval_ms, irrigation=args.irrigation == "auto")
+    App(root, records, source_name, args.interval_ms, irrigation=args.irrigation == "auto",
+        forecaster=args.forecaster, forecast_every=args.forecast_every)
     root.mainloop()

@@ -84,3 +84,22 @@ def test_bare_soil_outside_the_season():
     d = {"timestamp": datetime(2001, 1, 10), "u2": 2.0, "RH_min": 60.0, "precip": 0.0}
     out = field.step(d, 1.0)
     assert out["stage"] == "bare soil" and out["tp"] == 0.0 and out["ta"] == 0.0
+
+
+def test_rain_forecast_postpones_irrigation(year_1996):
+    days, eto = year_1996
+    days, eto = days[120:270], eto[120:270]          # the 1996 season
+    base = FieldModel(irrigation=True)
+    wet_forecast = FieldModel(irrigation=True, rain_forecast=lambda d: 50.0)
+    base_out = [base.step(d, e) for d, e in zip(days, eto)]
+    wet_out = [wet_forecast.step(d, e) for d, e in zip(days, eto)]
+    assert any(o["postponed"] for o in wet_out)
+    assert not any(o["postponed"] for o in base_out)
+    # Postponing stops at max_depletion: the crop is still irrigated.
+    assert sum(o["irrigation"] for o in wet_out) > 0.0
+    for o, d in zip(wet_out, days):
+        if o["irrigation"] > 0:
+            assert o["dr"] >= 0.0
+    first_base = next(i for i, o in enumerate(base_out) if o["irrigation"] > 0)
+    first_wet = next(i for i, o in enumerate(wet_out) if o["irrigation"] > 0)
+    assert first_wet > first_base

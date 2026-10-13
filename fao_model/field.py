@@ -27,13 +27,24 @@ class FieldModel:
     the root-zone depletion fraction reaches `mad` (management allowed
     depletion, default the crop's p), refilling the root zone to field
     capacity on that day; False for a rainfed field.
+
+    rain_forecast: optional callable(day record) -> rain (mm) expected over
+    the next `rain_days` days starting that day, from a forecast issued the
+    evening before. When at least `postpone_rain` mm is expected, a due
+    irrigation is postponed, unless the depletion has already reached
+    `max_depletion` of the available water.
     """
 
-    def __init__(self, crop=None, irrigation=False, soil=None, mad=None):
+    def __init__(self, crop=None, irrigation=False, soil=None, mad=None,
+                 rain_forecast=None, rain_days=3, postpone_rain=10.0, max_depletion=0.75):
         self.crop = crop or Crop()
         self.soil = soil or RichardsSolver3D(**COLUMN)
         self.irrigation = irrigation
         self.mad = self.crop.p if mad is None else mad
+        self.rain_forecast = rain_forecast
+        self.rain_days = rain_days
+        self.postpone_rain = postpone_rain
+        self.max_depletion = max_depletion
         self.theta_fc = float(self.soil._theta(np.array(H_FIELD_CAPACITY)))
         self.theta_wp = float(self.soil._theta(np.array(H_WILTING_POINT)))
         self.last = None
@@ -54,9 +65,13 @@ class FieldModel:
         c, tp, ep = self.crop.potential_rates(day, eto, d["u2"], d["RH_min"])
         zr_cm = 100.0 * c["zr"]
         dr, taw = self.root_zone(zr_cm)
-        irrigation = 0.0
+        irrigation, postponed = 0.0, False
         if self.irrigation and c["t"] is not None and dr >= self.mad * taw:
-            irrigation = dr
+            expected = self.rain_forecast(d) if self.rain_forecast else 0.0
+            if expected >= self.postpone_rain and dr < self.max_depletion * taw:
+                postponed = True
+            else:
+                irrigation = dr
         q_top = (d["precip"] + irrigation - ep) / 10.0
         out = self.soil.step(
             q_top, dt=1.0, tp=tp / 10.0,
@@ -69,6 +84,7 @@ class FieldModel:
             eto=eto,
             precip=d["precip"],
             irrigation=irrigation,
+            postponed=postponed,
             tp=tp,
             ep=ep,
             ta=10.0 * out["transpiration"],

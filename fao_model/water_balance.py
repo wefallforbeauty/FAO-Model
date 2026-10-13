@@ -7,11 +7,15 @@ compares the simulated topsoil moisture with ERA5. Writes a Markdown
 report with tables and figures:
 
     python -m fao_model.water_balance [--data CSV] [--first-year Y] [--last-year Y] [--out DIR]
+
+From 2015 on it also compares irrigation that is postponed when rain is
+forecast (perfect forecast, TimesFM, statistical baseline) with the plain rule.
 """
 import argparse
 import contextlib
+import copy
 import io
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta
 from pathlib import Path
 
 import numpy as np
@@ -22,6 +26,8 @@ from . import data as weather_data
 from .crop import Crop, adjust_for_climate
 from .et import asce_pm
 from .field import COLUMN, H_FIELD_CAPACITY, FieldModel
+from .forecast import Climatology, WeatherForecaster, add_eto
+from .forecast_skill import SPLIT, cached
 from .metrics import compare
 from .plotting import INK, INK_2, MUTED, SERIES, SURFACE, style
 from .richards import RichardsSolver3D
@@ -32,19 +38,22 @@ TOTALS = ("precip", "irrigation", "eto", "tp", "ta", "ep", "ea", "drainage", "ru
 TOP_CM = 7.5    # topsoil depth compared with ERA5's 0-7 cm layer
 
 
-def run_field(records, eto, crop, irrigation):
-    """Daily results of one scenario, plus the soil water profile on each planting day."""
+def run_field(records, eto, crop, irrigation, snapshot_at=None):
+    """Daily results of one scenario, the soil water profile on each planting day, and a copy
+    of the field as it was at the start of `snapshot_at` (None if not reached)."""
     field = FieldModel(crop, irrigation=irrigation, soil=RichardsSolver3D(**COLUMN))
     n_top = int(round(TOP_CM / field.soil.dz))
-    days, profiles = [], {}
+    days, profiles, snapshot = [], {}, None
     for d, e in zip(records, eto):
         day = d["timestamp"].date()
+        if d["timestamp"] == snapshot_at:
+            snapshot = copy.deepcopy(field)
         if crop.day_of_season(day) == 1:
             profiles[day.year] = field.soil.theta.mean(axis=(0, 1)).copy()
         out = field.step(d, e)
         theta_top = float(field.soil.theta[:, :, :n_top].mean())
         days.append(dict(out, date=day, theta_top=theta_top))
-    return field, days, profiles
+    return field, days, profiles, snapshot
 
 
 def seasons(days):
@@ -53,10 +62,11 @@ def seasons(days):
     for d in days:
         if d["t"] is None:
             continue
-        s = result.setdefault(d["date"].year, dict.fromkeys(TOTALS + ("irrigations",), 0.0))
+        s = result.setdefault(d["date"].year, dict.fromkeys(TOTALS + ("irrigations", "postponed"), 0.0))
         for key in TOTALS:
             s[key] += d[key]
         s["irrigations"] += d["irrigation"] > 0
+        s["postponed"] += d.get("postponed", False)
     return result
 
 
@@ -120,6 +130,49 @@ def run_pyfao56(records, eto, crop, field, profiles, irrigation):
         result[year] = {"ta": o["T"].sum(), "ea": o["E"].sum(), "irrigation": o["Irrig"].sum(),
                         "irrigations": int((o["Irrig"] > 0).sum()), "drainage": o["DP"].sum()}
     return result
+
+
+def forecast_scenarios(records, eto, crop, snapshot, start):
+    """Irrigated seasons from records[start] on, postponing irrigation when rain is forecast.
+
+    All scenarios continue from the same field state (snapshot). Forecasts of
+    the next 3 days' rain are issued the evening before each season day:
+    perfect (the rain that fell), TimesFM 2.5 and the statistical baseline.
+    """
+    in_season = [i for i in range(start, len(records))
+                 if crop.day_of_season(records[i]["timestamp"].date()) is not None]
+    rain = np.array([d["precip"] for d in records])
+    stamps = [records[i]["timestamp"] for i in in_season]
+    tables = {"Perfect forecast": dict(zip(stamps, [rain[i:i + 3].sum() for i in in_season]))}
+    climatology = Climatology(add_eto(records[:start]))
+    for name, backend in (("TimesFM 2.5", "timesfm"), ("Damped anomaly persistence", "baseline")):
+        try:
+            forecaster = WeatherForecaster(climatology, backend=backend, batch_size=32)
+        except Exception as exc:
+            print(f"{name} not available ({type(exc).__name__}); skipped.")
+            continue
+        print(f"{name}: rain forecasts for {len(in_season)} season days")
+        key = f"rain3_{backend}_{records[start]['timestamp']:%Y%m%d}_{len(records)}"
+        totals = cached(key, lambda: {"total": forecaster.rain_totals(records, [i - 1 for i in in_season], 3)})
+        tables[name] = dict(zip(stamps, totals["total"]))
+        del forecaster
+    results = {}
+    for name, table in tables.items():
+        field = copy.deepcopy(snapshot)
+        field.rain_forecast = lambda d, table=table: table.get(d["timestamp"], 0.0)
+        results[name] = [dict(field.step(d, e), date=d["timestamp"].date())
+                         for d, e in zip(records[start:], eto[start:])]
+    return results
+
+
+def irrigated_before_rain(days, records_by_date):
+    """Irrigations followed by at least 10 mm of rain on that day or the next two."""
+    count = 0
+    for d in days:
+        if d["irrigation"] > 0:
+            rain = sum(records_by_date.get(d["date"] + timedelta(days=k), 0.0) for k in range(3))
+            count += rain >= 10.0
+    return count
 
 
 # ---------------------------------------------------------------- figures
@@ -241,6 +294,46 @@ def _row(label, values, fmt="{:.0f}"):
     return f"| {label} | " + " | ".join(fmt.format(v) for v in values) + " |"
 
 
+def forecast_section(records, eto, crop, snapshot, start, plain_days):
+    scenarios = {"No forecast": [d for d in plain_days if d["date"] >= records[start]["timestamp"].date()]}
+    scenarios.update(forecast_scenarios(records, eto, crop, snapshot, start))
+    rain_by_date = {d["timestamp"].date(): d["precip"] for d in records}
+    summary = {name: seasons(days) for name, days in scenarios.items()}
+    years = sorted(summary["No forecast"])
+    names = list(scenarios)
+    first, last = years[0], years[-1]
+
+    def mean(name, key):
+        return float(np.mean([summary[name][y][key] for y in years]))
+
+    lines = [
+        "",
+        f"## 6. Irrigation with rain forecasts ({first}-{last})",
+        "",
+        "Same irrigated field and trigger, but a due irrigation is postponed when at least 10 mm of "
+        "rain is forecast for the next three days, unless 75 % of the available water is already "
+        "used. Forecasts are issued the evening before; \"perfect\" knows the rain that fell and "
+        "is the upper limit of what a forecast can save. All scenarios start from the same soil "
+        f"state on 1 January {first}. Season means:",
+        "",
+        "| | " + " | ".join(names) + " |",
+        "|---|" + "---|" * len(names),
+        "| Irrigation (mm) | " + " | ".join(f"{mean(n, 'irrigation'):.0f}" for n in names) + " |",
+        "| Number of irrigations | " + " | ".join(f"{mean(n, 'irrigations'):.1f}" for n in names) + " |",
+        "| Postponed irrigation days | " + " | ".join(f"{mean(n, 'postponed'):.1f}" for n in names) + " |",
+        "| Actual / potential transpiration | " + " | ".join(
+            f"{mean(n, 'ta') / mean(n, 'tp'):.3f}" for n in names) + " |",
+        f"| Drainage below {COLUMN['nz'] * COLUMN['dz'] / 100:g} m (mm) | " + " | ".join(
+            f"{mean(n, 'drainage'):.1f}" for n in names) + " |",
+        f"| Irrigations followed by ≥ 10 mm of rain within 3 days, all {len(years)} seasons | " + " | ".join(
+            str(irrigated_before_rain(scenarios[n], rain_by_date)) for n in names) + " |",
+        "",
+        "Rain of 10 mm or more within three days is rare in this season (see the forecast skill "
+        "report), which bounds what forecast-based postponing can save at this site.",
+    ]
+    return lines
+
+
 def main(argv=None):
     parser = argparse.ArgumentParser(description="Maize water balance at the data site.")
     parser.add_argument("--data", default=str(weather_data.DEFAULT_CSV))
@@ -257,9 +350,9 @@ def main(argv=None):
         records = [d for d in records if d["timestamp"].year <= args.last_year]
     eto = [asce_pm(d) for d in records]
 
-    days, by_scenario, theirs, field = {}, {}, {}, None
+    days, by_scenario, theirs, snapshots, field = {}, {}, {}, {}, None
     for name, irrigation in SCENARIOS.items():
-        field, days[name], profiles = run_field(records, eto, crop, irrigation)
+        field, days[name], profiles, snapshots[name] = run_field(records, eto, crop, irrigation, SPLIT)
         by_scenario[name] = seasons(days[name])
         theirs[name] = run_pyfao56(records, eto, crop, field, profiles, irrigation)
     for d, rec in zip(days["rainfed"], records):
@@ -421,6 +514,9 @@ def main(argv=None):
         "![Topsoil water content against ERA5](soil_moisture_era5.png)",
         "",
     ]
+    start = next((i for i, d in enumerate(records) if d["timestamp"] >= SPLIT), 0)
+    if snapshots["irrigated"] is not None and start >= 365:
+        lines += forecast_section(records, eto, crop, snapshots["irrigated"], start, days["irrigated"])
     (out / "README.md").write_text("\n".join(lines), encoding="utf-8")
     print(f"Wrote {out / 'README.md'} and figures")
 

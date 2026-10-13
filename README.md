@@ -1,4 +1,4 @@
-# FAO-Model 03
+# FAO-Model 04
 
 Daily evapotranspiration (ET) equations and the water balance of an irrigated
 maize field on a 3D Richards soil-water solver, with a forecasting dashboard,
@@ -15,12 +15,14 @@ driven by real weather data. What changed in this version:
   transpiration goes to growing roots through the Feddes stress function,
   potential soil evaporation to the surface.
 - **Irrigation**: optional automatic irrigation that refills the root zone
-  to field capacity when 55 % of the available water is used.
+  to field capacity when 55 % of the available water is used; it can wait
+  when rain is forecast.
 - **Soil water**: 3D van Genuchten–Mualem Richards solver (mass-conservative
   explicit finite volumes with adaptive sub-steps), a 1.5 m column in 2.5 cm
   layers.
-- **Forecasts** of every series: TimesFM when installed, otherwise a
-  damped-trend fallback.
+- **Forecasts**: 14-day forecasts of the weather inputs and reference ET with
+  TimesFM 2.5 (optional) or a statistical baseline, scored against what
+  happened.
 - **Data**: 30 years (1995–2024) of daily ERA5 weather for the Konya Plain,
   Türkiye, from Open-Meteo.
 
@@ -40,6 +42,18 @@ python -m venv .venv
 pip install -e ".[dev]"                 # numpy, matplotlib, pytest, pandas, pyfao56
 ```
 
+TimesFM forecasts are optional. They need PyTorch and download about 1 GB of
+weights from Hugging Face on first use; on a CPU a forecast takes about a
+second and the model about 2 GB of memory. Without TimesFM everything runs with
+the statistical baseline.
+
+```sh
+# Linux: the default PyTorch wheel includes GPU libraries (several GB);
+# for a CPU-only install, get PyTorch from its CPU index first:
+#   pip install torch --index-url https://download.pytorch.org/whl/cpu
+pip install -e ".[forecast]"            # timesfm, torch
+```
+
 With the environment active:
 
 ```sh
@@ -47,15 +61,19 @@ python -m fao_model                     # dashboard, replays the Konya record
 python -m fao_model --synthetic         # synthetic daily weather instead
 python -m fao_model --interval-ms 200   # faster replay (default 1000 ms per day)
 python -m fao_model --irrigation none   # rainfed maize instead of automatic irrigation
+python -m fao_model --forecaster baseline   # statistical forecasts instead of TimesFM
 python -m fao_model.validate            # regenerates reports/validation/
-python -m fao_model.water_balance       # regenerates reports/water_balance/ (about 3 minutes)
+python -m fao_model.water_balance       # regenerates reports/water_balance/ (about 8 minutes)
+python -m fao_model.forecast_skill      # regenerates reports/forecast_skill/ (TimesFM: about 20 minutes)
 python -m fao_model.data --help         # download another site or period
 pytest
 ```
 
 On systems where `python` points to Python 2 or is missing, use `python3`.
 If the dashboard cannot draw the live graph, it shows the import error that
-names the missing piece, usually Tk support in Python or in Pillow.
+names the missing piece, usually Tk support in Python or in Pillow. If the
+TimesFM download fails, setting `HF_HUB_DISABLE_XET=1` makes Hugging Face fall
+back to plain HTTP.
 
 ## Layout
 
@@ -69,7 +87,8 @@ names the missing piece, usually Tk support in Python or in Pillow.
 | `fao_model/richards.py` | van Genuchten–Mualem functions and the 3D Richards solver with root uptake |
 | `fao_model/crop.py` | maize parameters, FAO-56 dual crop coefficients, root growth, Feddes stress |
 | `fao_model/field.py` | daily field water balance: crop, soil and automatic irrigation |
-| `fao_model/forecast.py` | TimesFM forecaster with fallback |
+| `fao_model/forecast.py` | weather and reference ET forecasts: TimesFM 2.5 or climatology with damped anomaly persistence |
+| `fao_model/forecast_skill.py` | forecast skill report |
 | `fao_model/simulation.py` | the daily model loop, without GUI |
 | `fao_model/app.py` | Tkinter dashboard |
 | `fao_model/metrics.py`, `fao_model/validate.py` | agreement statistics and the ET validation report |
@@ -127,16 +146,46 @@ in [reports/water_balance](reports/water_balance/README.md). Season means, mm:
   soil moisture (daily r = 0.80, monthly cycle r = 0.97) but is 0.07 m³/m³
   drier; the two soils differ.
 
+### Forecasts
+
+Forecasts issued weekly over 2015–2024 (520), each from data up to its issue
+day; full tables and figures in [reports/forecast_skill](reports/forecast_skill/README.md).
+Reference ET error (mm/day) by days ahead:
+
+| | 1 day | 3 days | 7 days | 7-day total (mm) |
+|---|---|---|---|---|
+| Climatology | 0.58 | 0.55 | 0.58 | 2.9 |
+| TimesFM 2.5, ETo from forecast weather | 0.40 | 0.52 | 0.58 | 2.5 |
+| Damped anomaly persistence | 0.40 | 0.51 | 0.57 | 2.5 |
+| Persistence (tomorrow = today) | 0.45 | 0.65 | 0.79 | 3.8 |
+
+- **Zero-shot TimesFM matches the statistical baseline.** It is slightly better
+  for minimum temperature and humidity a week ahead. Beyond about three days
+  every method is back to climatology.
+- **Rain:** no method caught any of the 32 cases with at least 10 mm of rain
+  within three days.
+- **Uncertainty:** TimesFM's 10–90 % interval is well calibrated (78–84 % of
+  observations inside).
+- **Why the ceiling:** a single site's history cannot see weather systems
+  coming; that takes numerical weather prediction.
+- **Irrigation with rain forecasts:** postponing irrigation when rain is
+  forecast saves no water at this site, because in-season rain is too rare.
+  Over 2015–2024 only 3 irrigations were followed by at least 10 mm of rain
+  within three days. A perfect forecast avoids those 3 but uses as much water
+  over the season (820 against 818 mm). TimesFM and the baseline never
+  postponed. Details:
+  [reports/water_balance](reports/water_balance/README.md), section 6.
+
 ## Not done in this update
 
 ### From the 01 notes (original wording)
 
-- Then the timesfm forecast should be applicable weather data.
 - Richards equation part should be much more complex:
   - The h parameter for Richards eq. should be adjusted to real, plausible soil statistics.
   - Different numerical solutions should be investigated other than FVM like: FDM, FEM, Mixed Finite Element, Explicit Euler, Implicit Euler, Newton-Raphson, Picard.
 - Some uncertainty could be added to ET and \theta(x,y,z,t) functions.
 - Both the forecast data and the solutions should be an input for another optimization process.
+  (Forecasts now feed a simple irrigation rule; there is no optimization yet.)
 - The soil and plant data could be researched to add more realistic parameters and constants.
   (Maize parameters now come from FAO-56 and Wesseling (1991); the soil is still
   the loam of 01.)
@@ -144,13 +193,12 @@ in [reports/water_balance](reports/water_balance/README.md). Season means, mm:
 
 ### Known limitations
 
-- **TimesFM is not installed** here, so every forecast comes from the
-  damped-trend fallback. Also:
-  - The loading code (`TimesFm(hparams)` with `load_from_checkpoint`) has not
-    been checked against a current TimesFM release.
-  - Forecast errors are swallowed silently.
-  - The context length (2048) is larger than timesfm-1.0-200m supports (512).
-  - It forecasts the model outputs, not the weather inputs.
+- **Univariate, zero-shot forecasts:** each weather variable is forecast from
+  its own past at one site, with no weather-model input, so skill fades after
+  about three days and rain events are missed. TimesFM's covariate support
+  (XReg) is not used.
+- **TimesFM on a CPU** takes about a second per forecast and about 2 GB of
+  memory, so with TimesFM the dashboard issues a forecast once a week.
 - **Top layer thickness:** soil evaporation depends on it. With the uniform
   grid, 5 cm layers gave about 30 % more evaporation than the 2.5 cm used now. A
   grid that is finer near the surface would remove most of this dependence.
@@ -163,7 +211,7 @@ in [reports/water_balance](reports/water_balance/README.md). Season means, mm:
   - 100 % efficient and applied within one day;
   - always refills the root zone to field capacity;
   - no limits on amount, interval or available water;
-  - no use of weather forecasts.
+  - forecasts are used only to postpone irrigation before rain.
 - **Field capacity** is set at −100 cm. At −330 cm this soil would hold much
   less available water, so irrigation amounts depend on that choice.
 - **Crop:**
@@ -180,25 +228,25 @@ in [reports/water_balance](reports/water_balance/README.md). Season means, mm:
 
 ## Next steps
 
-1. **TimesFM:**
-   - install the current release and fix the loading code;
-   - forecast the weather inputs (temperature, humidity, wind, radiation, rain)
-     and compute ET from them;
-   - measure forecast skill on 2015–2024.
-2. **Irrigation scheduling with forecasts:** delay or reduce irrigation when rain
-   is forecast, add application efficiency and limits on amount and interval,
-   and compare strategies, for example full refills against deficit irrigation.
-   This leads into the optimization item.
-3. **Yield response to water:** relate seasonal water stress to yield with the
+1. **Numerical weather forecasts:**
+   - compare TimesFM with weather-model forecasts 1–7 days ahead (Open-Meteo's
+     Previous Runs API: GFS from 2021, ECMWF and others from 2024);
+   - use them as TimesFM covariates or directly in irrigation decisions.
+2. **Yield response to water:** relate seasonal water stress to yield with the
    FAO-33 Ky factor, so irrigation strategies can be compared by yield and water
    use.
+3. **Irrigation strategies and optimization:**
+   - deficit irrigation, application efficiency, limits on amount and interval,
+     a seasonal water budget;
+   - optimize the trigger and amounts for water productivity.
 4. **Soil solver:**
-   - implicit Richards solver (mixed-form modified Picard, then Newton) on a grid
-     refined near the surface, compared with the explicit one;
+   - implicit Richards solver (mixed-form modified Picard, then Newton) on a
+     grid refined near the surface, compared with the explicit one;
    - soil parameters from the Carsel & Parrish (1988) texture classes, or
      SoilGrids with Rosetta for the site.
 5. **Sensitivity analysis:** Morris screening and Sobol indices of the ET
    equations and of the field water balance to their parameters.
-6. **Uncertainty:** Monte Carlo on inputs and parameters, and TimesFM quantiles.
+6. **Uncertainty:** Monte Carlo on inputs and parameters, and using TimesFM's
+   quantiles in irrigation decisions.
 7. **Measured data:** validation against measured ET (lysimeter or eddy
    covariance) and in-situ soil moisture, and more sites.
