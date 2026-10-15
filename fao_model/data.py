@@ -22,6 +22,8 @@ SITE = {"name": "Konya Plain (Cumra), Turkiye", "lat": 37.57, "lon": 32.78}
 START, END = "1995-01-01", "2024-12-31"
 DATA_DIR = Path(__file__).resolve().parent.parent / "data"
 DEFAULT_CSV = DATA_DIR / "konya_cumra_era5_daily_1995_2024.csv"
+# Recent observations, kept apart so the 1995-2024 reports stay reproducible.
+EXTENSION_CSV = DATA_DIR / "konya_cumra_era5_daily_2025_2026.csv"
 
 # Open-Meteo daily variable -> CSV column (units as delivered by the API)
 DAILY_VARS = {
@@ -125,6 +127,22 @@ def load(path=DEFAULT_CSV):
             "ET0_ref": float(row["ET0_openmeteo"]),
             "SM_0_7cm": float(row["soil_moisture_0_7cm"]) if row.get("soil_moisture_0_7cm") else None,
         })
+    return meta, records
+
+
+def load_all(paths=(DEFAULT_CSV, EXTENSION_CSV)):
+    """Records of several consecutive CSVs of one site joined into one series.
+
+    Returns the first file's metadata and the records; raises ValueError if
+    the files overlap or leave a gap.
+    """
+    meta, records = load(paths[0])
+    for path in paths[1:]:
+        _, more = load(path)
+        gap = (more[0]["timestamp"] - records[-1]["timestamp"]).days
+        if gap != 1:
+            raise ValueError(f"{path} does not start the day after the previous file ends")
+        records += more
     return meta, records
 
 

@@ -7,6 +7,7 @@ MUTED = "#898781"
 GRID = "#e1e0d9"
 AXIS = "#c3c2b7"
 SERIES = ("#2a78d6", "#eb6834")
+CATEGORICAL = SERIES + ("#1baf7a", "#eda100")     # slots 1-4, in this order
 BLUE_LIGHT, BLUE_DARK = "#86b6ef", "#1c5cab"
 
 

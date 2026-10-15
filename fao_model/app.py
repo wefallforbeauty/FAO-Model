@@ -1,6 +1,6 @@
 import argparse
 import tkinter as tk
-from datetime import timedelta
+from datetime import date, timedelta
 from tkinter import ttk
 
 try:
@@ -24,7 +24,7 @@ class App:
     MAX_TEXT_LINES = 5000
 
     def __init__(self, root, records=None, source_name="synthetic weather", update_ms=UPDATE_MS,
-                 irrigation=True, forecaster="auto", forecast_every=None):
+                 irrigation=True, forecaster="auto", forecast_every=None, start=None):
         self.root = root
         field = "irrigated maize" if irrigation else "rainfed maize"
         self.root.title(f"Continuous ET / Richards / TimesFM Dashboard: {source_name}, {field}")
@@ -32,7 +32,7 @@ class App:
         self.root.protocol("WM_DELETE_WINDOW", self.close)
         self.update_ms = update_ms
         self.sim = Simulation(records, irrigation=irrigation, forecaster=forecaster,
-                              forecast_every=forecast_every)
+                              forecast_every=forecast_every, start=start)
         self.running = True
         self.after_id = None
         self.build_gui()
@@ -214,11 +214,13 @@ class App:
         )
         issued = forecasts["issued"]
         band = "ETo_q10" in forecasts
+        source = sim.forecaster.last_source
         self.text.insert(
             tk.END,
             f"FORECAST issued {issued:%Y-%m-%d} (a new one every {sim.forecast_every} days)\n"
             f"{sim.forecaster.status}\n"
-            "date         T_max  T_min   rain    ETo" + ("   10-90 %" if band else "") + "\n"
+            + (f"This forecast: {source}\n" if source else "")
+            + "date         T_max  T_min   rain    ETo" + ("   10-90 %" if band else "") + "\n"
         )
         for k in range(min(7, len(forecasts["ETo"]))):
             day = issued + timedelta(days=k + 1)
@@ -246,27 +248,30 @@ class App:
 
 def main(argv=None):
     parser = argparse.ArgumentParser(description="Run the ET / soil water dashboard.")
-    parser.add_argument("--data", default=str(weather_data.DEFAULT_CSV),
-                        help="daily weather CSV written by fao_model.data")
+    parser.add_argument("--data", nargs="+", default=[str(weather_data.DEFAULT_CSV), str(weather_data.EXTENSION_CSV)],
+                        help="daily weather CSVs written by fao_model.data, consecutive in time")
     parser.add_argument("--synthetic", action="store_true",
                         help="use the synthetic weather generator instead of real data")
     parser.add_argument("--interval-ms", type=int, default=App.UPDATE_MS,
                         help="milliseconds between simulated days")
     parser.add_argument("--irrigation", choices=("auto", "none"), default="auto",
                         help="automatic irrigation of the maize field, or a rainfed field")
-    parser.add_argument("--forecaster", choices=("auto", "timesfm", "baseline"), default="auto",
-                        help="TimesFM 2.5 if installed (auto), or the statistical baseline")
+    parser.add_argument("--forecaster", choices=("auto", "timesfm", "baseline", "ecmwf", "gfs"), default="auto",
+                        help="TimesFM 2.5 if installed (auto), the statistical baseline, or archived "
+                             "ECMWF / GFS forecasts (2024-03-15 to 2026-09-30)")
+    parser.add_argument("--start", type=date.fromisoformat, default=None,
+                        help="first day to replay, e.g. 2024-03-15 for the weather-model forecasts")
     parser.add_argument("--forecast-every", type=int, default=None,
                         help="days between forecasts (default 7 with TimesFM, else 1)")
     args = parser.parse_args(argv)
     records, source_name = None, "synthetic weather"
     if not args.synthetic:
         try:
-            meta, records = weather_data.load(args.data)
-            source_name = meta.get("site", args.data)
+            meta, records = weather_data.load_all(args.data)
+            source_name = meta.get("site", args.data[0])
         except FileNotFoundError:
             print(f"{args.data} not found; using synthetic weather.")
     root = tk.Tk()
     App(root, records, source_name, args.interval_ms, irrigation=args.irrigation == "auto",
-        forecaster=args.forecaster, forecast_every=args.forecast_every)
+        forecaster=args.forecaster, forecast_every=args.forecast_every, start=args.start)
     root.mainloop()

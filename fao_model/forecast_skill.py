@@ -17,7 +17,7 @@ from matplotlib.figure import Figure
 
 from . import data as weather_data
 from .forecast import CONTEXT, HORIZON, WEATHER, Climatology, WeatherForecaster, add_eto
-from .plotting import BLUE_LIGHT, INK, INK_2, MUTED, SERIES, SURFACE, style
+from .plotting import BLUE_LIGHT, CATEGORICAL, INK, INK_2, MUTED, SERIES, SURFACE, style
 
 ROOT = Path(__file__).resolve().parent.parent
 REPORT_DIR = ROOT / "reports" / "forecast_skill"
@@ -64,7 +64,7 @@ def eto_chart(path, curves, climatology):
     ax = fig.subplots()
     leads = np.arange(1, HORIZON + 1)
     ax.plot(leads, climatology, color=MUTED, linewidth=2, label="Climatology")
-    for (label, values), color in zip(curves, SERIES + ("#1baf7a", "#eda100")):
+    for (label, values), color in zip(curves, CATEGORICAL[:len(curves)], strict=True):
         ax.plot(leads, values, color=color, linewidth=2, marker="o", markersize=4, label=label)
     ax.set_xlabel("Days ahead")
     ax.set_ylabel("Mean absolute error (mm/day)")
@@ -84,7 +84,7 @@ def skill_chart(path, panels):
     leads = np.arange(1, HORIZON + 1)
     for ax, (key, curves) in zip(axes.flat, panels):
         ax.axhline(0.0, color=INK_2, linewidth=1)
-        for (label, values), color in zip(curves, SERIES):
+        for (label, values), color in zip(curves, CATEGORICAL[:len(curves)], strict=True):
             ax.plot(leads, values, color=color, linewidth=2, label=label)
         ax.set_title(LABELS[key], fontsize=9)
         ax.set_xticks([1, 7, 14])

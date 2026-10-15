@@ -1,5 +1,76 @@
 # Update log
 
+## 05 (2026-10-15)
+
+Pull request #5. 04 concluded that a single site's history cannot foresee
+the weather and that weather models would be needed. 05 checks that with
+archived ECMWF and GFS forecasts and brings them into the dashboard.
+
+### Data
+
+- **Observations extended:** ERA5 observations for 2025-01-01 to 2026-09-30
+  are in a separate file. `data.load_all()` joins them to 1995–2024 and checks
+  that there is no gap. The 1995–2024 reports keep using the original file.
+- **Archived forecasts:** `fao_model/nwp.py` downloads ECMWF IFS 0.25° and
+  NCEP GFS forecasts from Open-Meteo's Previous Runs API. These are hourly
+  values forecast 24 × lead hours earlier, for leads 1–7 days, 2024-03-15 to
+  2026-09-30. They are aggregated to daily weather like the observations and
+  saved in `data/nwp/`.
+
+### Weather-model forecast report
+
+`python -m fao_model.nwp_skill` scores 864 forecasts (May 2024 – September
+2026). They are compared, 1–7 days ahead, with TimesFM, the damped anomaly
+persistence baseline, climatology and persistence:
+
+| Reference ET error (mm/day) | 1 day | 3 days | 7 days |
+|---|---|---|---|
+| Climatology | 0.59 | 0.59 | 0.59 |
+| TimesFM 2.5 | 0.43 | 0.57 | 0.60 |
+| NCEP GFS, bias-corrected | 0.40 | 0.46 | 0.62 |
+| ECMWF IFS 0.25°, bias-corrected | 0.27 | 0.32 | 0.54 |
+
+- **Rain events (≥ 10 mm in 3 days):** ECMWF caught 33 of 48 (47 false
+  alarms) and GFS 28 (39 false alarms). TimesFM and the baseline caught none.
+- **Bias correction:** a running average of each model's error per variable
+  and lead, using only pairs known on the issue day, removes systematic errors
+  such as GFS's −1.3 °C in maximum temperature and +0.8 m/s in wind. It cuts
+  GFS's one-day ETo error from 0.53 to 0.40 mm/day.
+- **Irrigation:** the irrigation rule is not rerun with these forecasts. 04
+  showed that even a perfect forecast saves no water at this site in the maize
+  season.
+
+### Dashboard
+
+- `--forecaster ecmwf` or `--forecaster gfs` shows the archived 7-day forecast
+  as it was issued, with the baseline on days that have none.
+- `--start` begins the replay on a given day.
+- By default the dashboard now replays 1995 to September 2026.
+
+### Other
+
+- Report charts take their colours from one palette list and use `strict`
+  zips. A chart with more series than colours now fails loudly instead of
+  silently dropping a series, which had happened to two charts in a draft of
+  the new report.
+
+### Behaviour changes
+
+- `WeatherForecaster(backend="ecmwf" | "gfs")` has a 7-day horizon. Its
+  `last_source` says whether the latest forecast came from the archive or the
+  baseline.
+- `Simulation(..., start=date)` replays from that day; the site constants still
+  come from all records.
+- `python -m fao_model --data` accepts several consecutive CSV files.
+
+### Items addressed from the 01 notes
+
+None directly; 05 follows the first next step of README 04. For the note
+"Both the forecast data and the solutions should be an input for another
+optimization process." it provides better forecast data: weather-model
+forecasts 1–7 days ahead. The dashboard shows them but does not yet use them
+for irrigation, and the optimization is still to do.
+
 ## 04 (2026-10-13)
 
 Pull request #4. The forecasts now work and are scored. 01 called a TimesFM
