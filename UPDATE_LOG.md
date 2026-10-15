@@ -63,6 +63,14 @@ persistence baseline, climatology and persistence:
   come from all records.
 - `python -m fao_model --data` accepts several consecutive CSV files.
 
+### Items addressed from the 01 notes
+
+None directly; 05 follows the first next step of README 04. For the note
+"Both the forecast data and the solutions should be an input for another
+optimization process." it provides better forecast data: weather-model
+forecasts 1–7 days ahead. The dashboard shows them but does not yet use them
+for irrigation, and the optimization is still to do.
+
 ## 04 (2026-10-13)
 
 Pull request #4. The forecasts now work and are scored. 01 called a TimesFM
