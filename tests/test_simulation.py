@@ -82,3 +82,14 @@ def test_dashboard_with_timesfm():
     for _ in range(10):
         _, _, forecast = sim.step()
     assert "ETo_q10" in forecast and len(forecast["ETo"]) == 14
+
+
+def test_replay_from_a_start_date_with_weather_model_forecasts():
+    from datetime import date
+    from fao_model import data
+    _, records = data.load_all()
+    sim = Simulation(records, forecaster="ecmwf", start=date(2025, 6, 1))
+    day, _, forecast = sim.step()
+    assert day["timestamp"].date() == date(2025, 6, 1)
+    assert sim.forecast_every == 1 and len(forecast["ETo"]) == 7
+    assert sim.forecaster.last_source == "ECMWF IFS 0.25°"
