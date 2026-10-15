@@ -1,4 +1,4 @@
-# FAO-Model 04
+# FAO-Model 05
 
 Daily evapotranspiration (ET) equations and the water balance of an irrigated
 maize field on a 3D Richards soil-water solver, with a forecasting dashboard,
@@ -20,11 +20,14 @@ driven by real weather data. What changed in this version:
 - **Soil water**: 3D van Genuchten–Mualem Richards solver (mass-conservative
   explicit finite volumes with adaptive sub-steps), a 1.5 m column in 2.5 cm
   layers.
-- **Forecasts**: 14-day forecasts of the weather inputs and reference ET with
-  TimesFM 2.5 (optional) or a statistical baseline, scored against what
-  happened.
-- **Data**: 30 years (1995–2024) of daily ERA5 weather for the Konya Plain,
-  Türkiye, from Open-Meteo.
+- **Forecasts**: forecasts of the weather inputs and reference ET, scored
+  against what happened:
+  - TimesFM 2.5 (optional) or a statistical baseline, 14 days ahead;
+  - archived ECMWF and GFS weather-model forecasts, 1–7 days ahead, with a
+    running bias correction.
+- **Data**: daily ERA5 weather for the Konya Plain, Türkiye, from Open-Meteo:
+  1995–2024 for the reports, extended to September 2026 for the weather-model
+  comparison.
 
 ## Quick start
 
@@ -62,9 +65,12 @@ python -m fao_model --synthetic         # synthetic daily weather instead
 python -m fao_model --interval-ms 200   # faster replay (default 1000 ms per day)
 python -m fao_model --irrigation none   # rainfed maize instead of automatic irrigation
 python -m fao_model --forecaster baseline   # statistical forecasts instead of TimesFM
+python -m fao_model --forecaster ecmwf --start 2024-03-15   # archived ECMWF forecasts (or gfs)
 python -m fao_model.validate            # regenerates reports/validation/
 python -m fao_model.water_balance       # regenerates reports/water_balance/ (about 8 minutes)
 python -m fao_model.forecast_skill      # regenerates reports/forecast_skill/ (TimesFM: about 20 minutes)
+python -m fao_model.nwp_skill           # regenerates reports/nwp/ (TimesFM: about 20 minutes)
+python -m fao_model.nwp --help          # download archived weather-model forecasts
 python -m fao_model.data --help         # download another site or period
 pytest
 ```
@@ -89,6 +95,8 @@ back to plain HTTP.
 | `fao_model/field.py` | daily field water balance: crop, soil and automatic irrigation |
 | `fao_model/forecast.py` | weather and reference ET forecasts: TimesFM 2.5 or climatology with damped anomaly persistence |
 | `fao_model/forecast_skill.py` | forecast skill report |
+| `fao_model/nwp.py` | download and load archived ECMWF and GFS forecasts by lead day |
+| `fao_model/nwp_skill.py` | weather-model forecasts against TimesFM and the baselines |
 | `fao_model/simulation.py` | the daily model loop, without GUI |
 | `fao_model/app.py` | Tkinter dashboard |
 | `fao_model/metrics.py`, `fao_model/validate.py` | agreement statistics and the ET validation report |
@@ -98,10 +106,16 @@ back to plain HTTP.
 
 ## Data
 
-`data/konya_cumra_era5_daily_1995_2024.csv`: daily ERA5 weather for the Konya
-Plain near Çumra (37.57° N, 32.78° E, 1013 m), 10 958 days without gaps. Weather
-data by [Open-Meteo.com](https://open-meteo.com/) (CC BY 4.0), generated using
-Copernicus Climate Change Service information. Columns, caveats and citations:
+- `data/konya_cumra_era5_daily_1995_2024.csv`: daily ERA5 weather for the
+  Konya Plain near Çumra (37.57° N, 32.78° E, 1013 m), 10 958 days without gaps.
+- `data/konya_cumra_era5_daily_2025_2026.csv`: the same for 2025-01-01 to
+  2026-09-30, kept apart so the 1995–2024 reports stay reproducible.
+- `data/nwp/`: daily weather forecast by ECMWF IFS 0.25° and NCEP GFS 1–7 days
+  ahead, 2024-03-15 to 2026-09-30, from Open-Meteo's Previous Runs API.
+
+Weather data by [Open-Meteo.com](https://open-meteo.com/) (CC BY 4.0), generated
+using Copernicus Climate Change Service information; NCEP GFS (public domain)
+and ECMWF IFS open data (CC BY 4.0). Columns, caveats and citations:
 [data/README.md](data/README.md).
 
 ## Results
@@ -176,6 +190,31 @@ Reference ET error (mm/day) by days ahead:
   postponed. Details:
   [reports/water_balance](reports/water_balance/README.md), section 6.
 
+### Weather-model forecasts
+
+Every day from May 2024 to September 2026 (864 forecasts), each issued the
+evening before; full tables and figures in [reports/nwp](reports/nwp/README.md).
+
+| Reference ET error (mm/day) | 1 day | 3 days | 7 days | 7-day total (mm) |
+|---|---|---|---|---|
+| Climatology | 0.59 | 0.59 | 0.59 | 2.8 |
+| Damped anomaly persistence | 0.44 | 0.57 | 0.59 | 2.6 |
+| TimesFM 2.5 | 0.43 | 0.57 | 0.60 | 2.7 |
+| NCEP GFS, bias-corrected | 0.40 | 0.46 | 0.62 | 2.0 |
+| ECMWF IFS 0.25°, bias-corrected | 0.27 | 0.32 | 0.54 | 1.7 |
+
+- **ECMWF has the smallest error at every lead.** Its error is 35–45 % below
+  TimesFM's 1–3 days ahead, and it still beats climatology at a week.
+- **Rain events:** ECMWF caught 33 of the 48 cases with at least 10 mm of rain
+  within three days, with 47 false alarms; GFS caught 28 with 39 false alarms.
+  TimesFM and the baseline caught none.
+- **Bias correction:** both models have systematic errors at this site (GFS:
+  maximum temperature −1.3 °C and wind +0.8 m/s one day ahead). A running bias
+  correction removes most of them, cutting GFS's one-day ETo error from 0.53 to
+  0.40 mm/day.
+- **Caveat:** ERA5, the observations here, comes from a model close to ECMWF's,
+  which may favour ECMWF.
+
 ## Not done in this update
 
 ### From the 01 notes (original wording)
@@ -193,10 +232,17 @@ Reference ET error (mm/day) by days ahead:
 
 ### Known limitations
 
-- **Univariate, zero-shot forecasts:** each weather variable is forecast from
-  its own past at one site, with no weather-model input, so skill fades after
-  about three days and rain events are missed. TimesFM's covariate support
-  (XReg) is not used.
+- **TimesFM is univariate and zero-shot:** each weather variable is forecast
+  from its own past at one site, so its skill fades after about three days and
+  it misses rain events. TimesFM's covariate support (XReg), which could take
+  the weather-model forecasts as input, is not used.
+- **Weather-model forecasts:**
+  - only 2024-03-15 to 2026-09-30 (the archive), seven days ahead and one run
+    per day, with no ensembles;
+  - verified against ERA5, which ECMWF makes with a model close to IFS, so the
+    comparison may favour ECMWF;
+  - the bias correction is a simple running average per variable and lead, and
+    rain is not corrected.
 - **TimesFM on a CPU** takes about a second per forecast and about 2 GB of
   memory, so with TimesFM the dashboard issues a forecast once a week.
 - **Top layer thickness:** soil evaporation depends on it. With the uniform
@@ -228,25 +274,24 @@ Reference ET error (mm/day) by days ahead:
 
 ## Next steps
 
-1. **Numerical weather forecasts:**
-   - compare TimesFM with weather-model forecasts 1–7 days ahead (Open-Meteo's
-     Previous Runs API: GFS from 2021, ECMWF and others from 2024);
-   - use them as TimesFM covariates or directly in irrigation decisions.
-2. **Yield response to water:** relate seasonal water stress to yield with the
+1. **Yield response to water:** relate seasonal water stress to yield with the
    FAO-33 Ky factor, so irrigation strategies can be compared by yield and water
    use.
-3. **Irrigation strategies and optimization:**
+2. **Irrigation strategies and optimization:**
    - deficit irrigation, application efficiency, limits on amount and interval,
      a seasonal water budget;
-   - optimize the trigger and amounts for water productivity.
-4. **Soil solver:**
+   - optimize the trigger and amounts for water productivity, with
+     weather-model forecasts of ET for the coming week.
+3. **Soil solver:**
    - implicit Richards solver (mixed-form modified Picard, then Newton) on a
      grid refined near the surface, compared with the explicit one;
    - soil parameters from the Carsel & Parrish (1988) texture classes, or
      SoilGrids with Rosetta for the site.
-5. **Sensitivity analysis:** Morris screening and Sobol indices of the ET
+4. **Sensitivity analysis:** Morris screening and Sobol indices of the ET
    equations and of the field water balance to their parameters.
-6. **Uncertainty:** Monte Carlo on inputs and parameters, and using TimesFM's
-   quantiles in irrigation decisions.
+5. **Uncertainty:** Monte Carlo on inputs and parameters; ensemble weather
+   forecasts and TimesFM's quantiles in irrigation decisions.
+6. **Forecasts:** TimesFM with the weather-model forecasts as covariates
+   (XReg), and better bias correction (regression on several predictors).
 7. **Measured data:** validation against measured ET (lysimeter or eddy
    covariance) and in-situ soil moisture, and more sites.
