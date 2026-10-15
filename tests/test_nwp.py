@@ -1,6 +1,5 @@
 from datetime import date, datetime, timedelta
 
-import numpy as np
 import pytest
 
 from fao_model import data, nwp

@@ -192,8 +192,8 @@ Reference ET error (mm/day) by days ahead:
 
 ### Weather-model forecasts
 
-Every day from May 2024 to September 2026 (864 forecasts), each issued the
-evening before; full tables and figures in [reports/nwp](reports/nwp/README.md).
+864 forecasts issued each evening from 30 April 2024 to 23 September 2026, for
+the next 1–7 days; full tables and figures in [reports/nwp](reports/nwp/README.md).
 
 | Reference ET error (mm/day) | 1 day | 3 days | 7 days | 7-day total (mm) |
 |---|---|---|---|---|
@@ -203,7 +203,7 @@ evening before; full tables and figures in [reports/nwp](reports/nwp/README.md).
 | NCEP GFS, bias-corrected | 0.40 | 0.46 | 0.62 | 2.0 |
 | ECMWF IFS 0.25°, bias-corrected | 0.27 | 0.32 | 0.54 | 1.7 |
 
-- **ECMWF has the smallest error at every lead.** Its error is 35–45 % below
+- **ECMWF has the smallest error at every lead.** Its error is 37–46 % below
   TimesFM's 1–3 days ahead, and it still beats climatology at a week.
 - **Rain events:** ECMWF caught 33 of the 48 cases with at least 10 mm of rain
   within three days, with 47 false alarms; GFS caught 28 with 39 false alarms.

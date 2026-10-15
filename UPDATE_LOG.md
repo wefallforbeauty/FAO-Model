@@ -51,7 +51,8 @@ persistence baseline, climatology and persistence:
 
 - Report charts take their colours from one palette list and use `strict`
   zips. A chart with more series than colours now fails loudly instead of
-  silently dropping a series, which had happened to one draft chart.
+  silently dropping a series, which had happened to two charts in a draft of
+  the new report.
 
 ### Behaviour changes
 
