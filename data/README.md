@@ -48,3 +48,46 @@ Generated using Copernicus Climate Change Service information.
   Zenodo. https://doi.org/10.5281/ZENODO.7970649
 - Hersbach, H., et al. (2023). ERA5 hourly data on single levels from 1940
   to present [Data set]. ECMWF. https://doi.org/10.24381/cds.adbb2d47
+
+## `konya_cumra_era5_daily_2025_2026.csv`
+
+The same site, variables and source for 2025-01-01 to 2026-09-30 (638 days,
+no gaps), kept in a separate file so the 1995-2024 reports stay
+reproducible. `fao_model.data.load_all()` joins both files into one series
+and checks that they meet without a gap; the dashboard and the weather-model
+comparison use it. The most recent months of ERA5 are preliminary (ERA5T)
+and can still be revised slightly.
+
+```sh
+python -m fao_model.data --start 2025-01-01 --end 2026-09-30 \
+    --out data/konya_cumra_era5_daily_2025_2026.csv
+```
+
+## `nwp/`: archived weather-model forecasts
+
+`konya_cumra_ecmwf_ifs025_daily_by_lead.csv` (ECMWF IFS 0.25°) and
+`konya_cumra_gfs_seamless_daily_by_lead.csv` (NCEP GFS): daily weather that
+each model forecast 1 to 7 days ahead, 2024-03-15 to 2026-09-30. ECMWF
+misses a few days at some leads in April 2026.
+
+| Column | Unit | Description |
+|---|---|---|
+| `date` | | the day the forecast is for (local time) |
+| `lead` | days | forecast made `lead` × 24 hours before each hour of that day |
+| `T_max`, `T_min` | °C | maximum / minimum of the hourly 2 m temperature |
+| `RH_max`, `RH_min`, `RH_mean` | % | from the hourly 2 m relative humidity |
+| `u10` | m s⁻¹ | mean 10 m wind speed |
+| `Rs` | MJ m⁻² day⁻¹ | sum of the hourly mean shortwave radiation |
+| `precip` | mm day⁻¹ | precipitation |
+| `P_hPa` | hPa | mean surface pressure |
+
+Only days with all 24 hourly values are kept. Regenerate:
+
+```sh
+python -m fao_model.nwp                        # both models, 2024-03-15 to 2026-09-30
+```
+
+Source: Open-Meteo's
+[Previous Runs API](https://open-meteo.com/en/docs/previous-runs-api)
+(CC BY 4.0), built from NCEP GFS (public domain, NOAA) and ECMWF IFS open
+data (CC BY 4.0).

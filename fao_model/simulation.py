@@ -22,16 +22,18 @@ class Simulation:
     for a rainfed field. crop defaults to maize with Kcb_mid adjusted to
     the records' mid-season climate.
 
-    forecaster: "auto" (TimesFM if it loads), "timesfm" or "baseline". A
-    14-day weather and ETo forecast is issued every `forecast_every` days
-    (default 7 with TimesFM, which takes about a second, else daily). The
-    baseline's climatology defaults to that of the records (a year at least).
+    forecaster: "auto" (TimesFM if it loads), "timesfm", "baseline", or
+    "ecmwf" / "gfs" (archived weather-model forecasts, 1-7 days). A forecast
+    is issued every `forecast_every` days (default 7 with TimesFM, which
+    takes about a second, else daily). The baseline's climatology defaults
+    to that of the records (a year at least). start: first day to replay;
+    the site constants still come from all the records.
     """
 
     CALIBRATION_WINDOW = 365    # days
 
     def __init__(self, records=None, seed=None, heat_index=None, irrigation=True, crop=None,
-                 forecaster="auto", forecast_every=None, climatology=None):
+                 forecaster="auto", forecast_every=None, climatology=None, start=None):
         if records is None:
             self.gen = WeatherGenerator(lat=40.0, elev=100.0, seed=seed)
             self.source = iter(self.gen.generate, None)
@@ -42,7 +44,9 @@ class Simulation:
             climate = [sample.ensure_required(sample.generate()) for _ in range(5 * 365)]
         else:
             self.gen = WeatherGenerator(lat=records[0]["lat"], elev=records[0]["elev"])
-            self.source = iter(records)
+            first = 0 if start is None else next(
+                i for i, d in enumerate(records) if d["timestamp"].date() >= start)
+            self.source = iter(records[first:])
             # Thornthwaite's heat index is a site constant: use the record's climatology.
             self.heat_index = heat_index or thornthwaite_heat_index(monthly_means(records))
             crop = crop or adjust_for_climate(Crop(), records)
