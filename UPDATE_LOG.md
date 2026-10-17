@@ -1,5 +1,69 @@
 # Update log
 
+## 06 (2026-10-17)
+
+Pull request #6. Until 05 the model could say how much water the maize
+used but not what that meant for the harvest. 06 adds the yield response to
+water, so water stress becomes a yield loss and irrigation can be judged by
+yield and water productivity.
+
+### Yield response (`fao_model/yield_response.py`)
+
+- **Relation:** FAO-33 (Doorenbos and Kassam, 1979), as summarised in FAO-66
+  (Steduto et al., 2012): 1 − Ya/Yx = Ky (1 − ETa/ETx).
+- **Maize Ky:** 1.25 for the whole season; by growth period 0.40
+  (vegetative), 1.50 (flowering), 0.50 (yield formation), 0.20 (ripening).
+  Periods are combined by multiplying their relative yields (Rao et al.,
+  1988).
+- **Periods on the season:** vegetative over the FAO-56 initial and
+  development stages; flowering from the start of mid-season (FAO-56:
+  "effective full cover for many crops occurs at the initiation of
+  flowering"), assumed to last 15 days; yield formation over the rest of
+  mid-season; ripening over the late season.
+- **Which ET:** with dual crop coefficients the deficit is a transpiration
+  deficit, so soil evaporation counts the same in ETx and ETa
+  (ETx = Tp + Ea, ETa = Ta + Ea). A transpiration-only variant is included.
+- `SeasonYield` keeps a running estimate through the season.
+
+### Yield report
+
+`python -m fao_model.yield_report` turns the rainfed and irrigated fields of
+the water balance report into relative yields, 1995–2024 (`reports/yield/`):
+
+| Season mean of Ya/Yx | Rainfed | Irrigated |
+|---|---|---|
+| By growth period (FAO-33) | 0.00 | 0.83 |
+| Whole season, Ky = 1.25 | 0.00 | 0.93 |
+| Ky on the FAO-56 stages (FAO-66 Table 2) | 0.01 | 0.89 |
+
+- **Rainfed maize fails:** about 51 mm of rain in the season against 885 mm
+  of reference ET.
+- **The irrigated field loses 17 %, most at flowering.** The report traces
+  the cause:
+  - irrigation days and the day after are 19 % of the season but carry 46 %
+    of the transpiration deficit;
+  - the whole refill is applied in one day and the wet top layers trigger the
+    Feddes function's oxygen stress;
+  - run again without oxygen stress, the field reaches 0.89.
+- **Yield and water productivity:** with an assumed maximum yield of 13 t/ha,
+  10.8 t/ha and 1.24 kg per m³ of crop ET. The Konya provincial average for
+  2024 (TÜİK, 12.65 t/ha) is given for comparison.
+
+### Dashboard
+
+- The maize field panel shows the yield estimate of the season so far, with
+  the season's ETa/ETx and growth period, and the last season's result.
+
+### Behaviour changes
+
+- `Simulation` has a `season_yield` (`SeasonYield`) fed with each field day.
+
+### Items addressed from the 01 notes
+
+None directly. For the note "Both the forecast data and the solutions should
+be an input for another optimization process." 06 provides what such an
+optimization would maximise: yield and water productivity.
+
 ## 05 (2026-10-15)
 
 Pull request #5. 04 concluded that a single site's history cannot foresee

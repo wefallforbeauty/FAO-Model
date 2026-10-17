@@ -9,10 +9,11 @@ from .field import COLUMN, FieldModel
 from .forecast import Climatology, WeatherForecaster, add_eto
 from .richards import RichardsSolver3D
 from .weather import WeatherGenerator
+from .yield_response import SeasonYield
 
 
 class Simulation:
-    """One step is one day: weather -> ET equations -> maize field water balance -> forecasts.
+    """One step is one day: weather -> ET equations -> maize field water balance and yield -> forecasts.
 
     records: daily weather to replay in order (e.g. fao_model.data.load()[1]);
     None runs the synthetic weather generator instead. step() raises
@@ -55,6 +56,7 @@ class Simulation:
         self.calib = Calibrator()
         soil = RichardsSolver3D(**dict(COLUMN, nx=5, ny=5))
         self.field = FieldModel(crop, irrigation=irrigation, soil=soil)
+        self.season_yield = SeasonYield(crop)
         self.richards = soil
         # Like the heat index, the climatology behind the baseline forecast is a site constant.
         climatology = climatology or Climatology(add_eto(climate))
@@ -81,6 +83,7 @@ class Simulation:
         self.data_history.append(data.copy())
         field = self.field.step(data, results["ET_ASCE_PM"])
         self.field_history.append(field)
+        self.season_yield.add(field)
         results["ET_crop_potential"] = field["tp"] + field["ep"]
         results["ET_crop_actual"] = field["ta"] + field["ea"]
         results["Richards_theta_mean"] = self.richards.theta_mean
