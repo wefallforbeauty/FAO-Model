@@ -198,6 +198,14 @@ class App:
             f"(irrigate at {sim.field.mad:.0%})\n"
             f"Irrigation today   : {f['irrigation']:.1f} mm\n"
         )
+        estimate = sim.season_yield
+        if f["t"] is not None and estimate.totals:
+            self.text.insert(
+                tk.END,
+                f"Yield so far (Ky)  : {estimate.relative_yield():.0%} of maximum "
+                f"(ETa/ETx {estimate.et_ratio():.3f}, {estimate.period(sim.field.crop, f['t'])})\n")
+        if estimate.last_season is not None:
+            self.text.insert(tk.END, f"Last season yield  : {estimate.last_season:.0%} of maximum\n")
         flux = sim.richards.last_step
         self.text.insert(
             tk.END,
