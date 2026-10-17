@@ -1,4 +1,4 @@
-# FAO-Model 05
+# FAO-Model 06
 
 Daily evapotranspiration (ET) equations and the water balance of an irrigated
 maize field on a 3D Richards soil-water solver, with a forecasting dashboard,
@@ -17,6 +17,9 @@ driven by real weather data. What changed in this version:
 - **Irrigation**: optional automatic irrigation that refills the root zone
   to field capacity when 55 % of the available water is used; it can wait
   when rain is forecast.
+- **Yield**: relative yield from the crop's water use with the FAO-33 yield
+  response factors (Ky) of maize by growth period, season by season and as a
+  running estimate in the dashboard.
 - **Soil water**: 3D van Genuchten–Mualem Richards solver (mass-conservative
   explicit finite volumes with adaptive sub-steps), a 1.5 m column in 2.5 cm
   layers.
@@ -68,6 +71,7 @@ python -m fao_model --forecaster baseline   # statistical forecasts instead of T
 python -m fao_model --forecaster ecmwf --start 2024-03-15   # archived ECMWF forecasts (or gfs)
 python -m fao_model.validate            # regenerates reports/validation/
 python -m fao_model.water_balance       # regenerates reports/water_balance/ (about 8 minutes)
+python -m fao_model.yield_report        # regenerates reports/yield/ (about 8 minutes)
 python -m fao_model.forecast_skill      # regenerates reports/forecast_skill/ (TimesFM: about 20 minutes)
 python -m fao_model.nwp_skill           # regenerates reports/nwp/ (TimesFM: about 20 minutes)
 python -m fao_model.nwp --help          # download archived weather-model forecasts
@@ -93,6 +97,7 @@ back to plain HTTP.
 | `fao_model/richards.py` | van Genuchten–Mualem functions and the 3D Richards solver with root uptake |
 | `fao_model/crop.py` | maize parameters, FAO-56 dual crop coefficients, root growth, Feddes stress |
 | `fao_model/field.py` | daily field water balance: crop, soil and automatic irrigation |
+| `fao_model/yield_response.py` | FAO-33 yield response to water: Ky by growth period, running season estimate |
 | `fao_model/forecast.py` | weather and reference ET forecasts: TimesFM 2.5 or climatology with damped anomaly persistence |
 | `fao_model/forecast_skill.py` | forecast skill report |
 | `fao_model/nwp.py` | download and load archived ECMWF and GFS forecasts by lead day |
@@ -101,6 +106,7 @@ back to plain HTTP.
 | `fao_model/app.py` | Tkinter dashboard |
 | `fao_model/metrics.py`, `fao_model/validate.py` | agreement statistics and the ET validation report |
 | `fao_model/water_balance.py` | maize water balance report: scenarios, pyfao56 and ERA5 comparisons |
+| `fao_model/yield_report.py` | maize yield report: relative yield, its causes, water productivity |
 | `fao_model/plotting.py` | shared figure style of the reports |
 | `tests/` | FAO-56 examples, cross-checks against pyfao56, solver, crop, field and data tests |
 
@@ -159,6 +165,33 @@ in [reports/water_balance](reports/water_balance/README.md). Season means, mm:
 - **Against ERA5:** the simulated topsoil water content follows ERA5's 0–7 cm
   soil moisture (daily r = 0.80, monthly cycle r = 0.97) but is 0.07 m³/m³
   drier; the two soils differ.
+
+### Yield response to water
+
+Relative yield Ya/Yx of the same fields with the FAO-33 yield response factors
+of maize, 30 seasons; full tables and figures in
+[reports/yield](reports/yield/README.md).
+
+| Season mean of Ya/Yx | Rainfed | Irrigated |
+|---|---|---|
+| By growth period (FAO-33), used here | 0.00 | 0.83 (0.80–0.89) |
+| Whole season, Ky = 1.25 | 0.00 | 0.93 |
+| Ky on the FAO-56 stages (FAO-66 Table 2) | 0.01 | 0.89 |
+| Irrigated field without oxygen stress | | 0.89 |
+
+- **Rainfed maize fails:** about 51 mm of rain falls in the season against
+  885 mm of reference ET.
+- **The irrigated field loses 17 %, most of it at flowering** (Ky 1.50).
+  About a third of that loss is oxygen stress: the field model applies the
+  whole refill in one day, which waterlogs the top layers on irrigation days
+  and the day after (Ta/Tp 0.77 against 0.95 on other days). Without oxygen
+  stress the field reaches 0.89.
+- **Where the periods are placed matters:** with the four Ky values on the
+  FAO-56 stages instead, the irrigated mean is 0.89.
+- **Yield and water productivity:** with an assumed maximum yield of 13 t/ha,
+  the irrigated field yields 10.8 t/ha, 1.24 kg per m³ of crop ET. Konya
+  province averaged 12.65 t/ha in 2024 (TÜİK), so the assumed maximum may be
+  low, the simulated stress too high, or both.
 
 ### Forecasts
 
@@ -262,8 +295,22 @@ the next 1–7 days; full tables and figures in [reports/nwp](reports/nwp/README
   less available water, so irrigation amounts depend on that choice.
 - **Crop:**
   - the planting date is fixed at 1 May every year;
-  - stage lengths do not respond to temperature;
-  - there is no yield model, so water stress does not yet translate into yield.
+  - stage lengths do not respond to temperature.
+- **Yield** follows the empirical FAO-33 relation:
+  - the flowering period is assumed to last 15 days from the start of
+    mid-season;
+  - absolute yields rest on an assumed maximum yield (13 t/ha);
+  - there is no crop growth model (biomass, harvest index), and stresses other
+    than water (heat, nutrients) are left out.
+- **Stress in the irrigated field** comes partly from the field model:
+  - the whole refill is applied in one day, so the top layers become wet
+    enough for the Feddes function's oxygen stress on irrigation days and the
+    day after;
+  - root water uptake has no compensation: uptake lost in dry top layers is
+    not taken from wetter, deeper ones.
+
+  Without oxygen stress the irrigated field's relative yield rises from 0.83
+  to 0.89 in the yield report.
 - **Validation** is against computed references (ASCE-PM, Open-Meteo ET0,
   pyfao56, ERA5 soil moisture), not measurements, and covers one site. ERA5 is
   reanalysis, not station data.
@@ -274,24 +321,25 @@ the next 1–7 days; full tables and figures in [reports/nwp](reports/nwp/README
 
 ## Next steps
 
-1. **Yield response to water:** relate seasonal water stress to yield with the
-   FAO-33 Ky factor, so irrigation strategies can be compared by yield and water
-   use.
-2. **Irrigation strategies and optimization:**
+1. **Irrigation strategies and optimization:**
    - deficit irrigation, application efficiency, limits on amount and interval,
-     a seasonal water budget;
+     a seasonal water budget, compared by yield and water productivity;
    - optimize the trigger and amounts for water productivity, with
      weather-model forecasts of ET for the coming week.
+2. **Root uptake and irrigation in the field model:** irrigation applied over
+   hours instead of one day, and compensated root water uptake (for example
+   Jarvis, 1989), which change the stress of the irrigated field (see the yield
+   report).
 3. **Soil solver:**
    - implicit Richards solver (mixed-form modified Picard, then Newton) on a
      grid refined near the surface, compared with the explicit one;
    - soil parameters from the Carsel & Parrish (1988) texture classes, or
      SoilGrids with Rosetta for the site.
 4. **Sensitivity analysis:** Morris screening and Sobol indices of the ET
-   equations and of the field water balance to their parameters.
+   equations, the field water balance and the yield to their parameters.
 5. **Uncertainty:** Monte Carlo on inputs and parameters; ensemble weather
    forecasts and TimesFM's quantiles in irrigation decisions.
 6. **Forecasts:** TimesFM with the weather-model forecasts as covariates
    (XReg), and better bias correction (regression on several predictors).
 7. **Measured data:** validation against measured ET (lysimeter or eddy
-   covariance) and in-situ soil moisture, and more sites.
+   covariance), in-situ soil moisture and yields, and more sites.
