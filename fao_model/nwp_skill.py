@@ -298,9 +298,9 @@ def main(argv=None):
     lines += [
         "## 5. What this means for irrigation",
         "",
-        "The water balance report (section 6) found that even a perfect 3-day rain forecast saves no "
-        "irrigation water at this site in the maize season, because rain is rare then. Better forecasts "
-        "cannot beat that bound, so the irrigation rule is not rerun with these models.",
+        "The water balance report (section 6) found that even a perfect 3-day rain forecast saves little "
+        "irrigation water at this site in the maize season (about 2 %), because rain is rare then. Better "
+        "forecasts cannot beat that bound, so the irrigation rule is not rerun with these models.",
         "",
     ]
     (out / "README.md").write_text("\n".join(lines), encoding="utf-8")
