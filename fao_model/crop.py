@@ -5,6 +5,12 @@ The defaults describe grain maize: stage lengths from FAO-56 Table 11
 coefficients from Table 17 and rooting depth and depletion fraction from
 Table 22. The water stress thresholds are the corn values of Wesseling
 (1991) for the Feddes et al. (1978) uptake function.
+
+Root water uptake is compensated (Jarvis, 1989): roots in favourable layers
+make up for stressed ones until the stress index of the whole root zone
+falls below omega_c. No value of omega_c is tabulated for crops; 0.8 makes
+transpiration start to fall at the FAO-56 depletion fraction p when the
+root zone dries from field capacity (reports/field_model).
 """
 from dataclasses import dataclass, replace
 from datetime import date
@@ -45,6 +51,7 @@ class Crop:
     feddes_h3_high: float = -325.0  # ... down to h3, for potential transpiration >= 0.5 cm/day
     feddes_h3_low: float = -600.0   # h3 for potential transpiration <= 0.1 cm/day
     feddes_h4: float = -8000.0      # no uptake below this head (wilting)
+    omega_c: float = 0.8            # critical stress index of compensated uptake; 1 = no compensation
 
     @property
     def season_length(self):

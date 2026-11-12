@@ -22,7 +22,7 @@ from . import data as weather_data
 from . import yield_response as yr
 from .crop import Crop, adjust_for_climate
 from .et import asce_pm
-from .field import FieldModel
+from .field import IRRIGATION_RATE, FieldModel
 from .plotting import CATEGORICAL, INK_2, MUTED, SERIES, SURFACE, style
 from .water_balance import SCENARIOS, run_field
 
@@ -257,14 +257,14 @@ def main(argv=None):
         "",
         f"- **Just after irrigation.** Irrigation days and the day after make up {s['day_share']:.0%} "
         f"of the season but {s['deficit_share']:.0%} of the transpiration deficit: Ta/Tp is "
-        f"{s['ratio_near']:.2f} on those days against {s['ratio_other']:.2f} on the others. The "
-        "whole refill is applied in one day, which wets the top layers above "
-        f"{crop.feddes_h2:g} cm, where the Feddes function reduces uptake for lack of oxygen.",
-        f"- **Before irrigation.** At high demand, uptake starts to fall once the head drops below "
-        f"{crop.feddes_h3_high:g} cm, which in this soil is {h3_depletion:.0%} depletion, close to the "
-        f"{crop.p:.0%} trigger. The "
-        "top of the root zone, where most roots are, dries faster than the root-zone average, and "
-        "uptake lost there is not made up from wetter, deeper layers.",
+        f"{s['ratio_near']:.2f} on those days against {s['ratio_other']:.2f} on the others. The refill "
+        f"({IRRIGATION_RATE:g} mm/hour) wets the top layers above {crop.feddes_h2:g} cm, where the "
+        "Feddes function reduces uptake for lack of oxygen.",
+        f"- **Between irrigations.** At high demand, the Feddes function lowers uptake below "
+        f"{crop.feddes_h3_high:g} cm, which in this soil is {h3_depletion:.0%} depletion, before the "
+        f"{crop.p:.0%} trigger. The top of the root zone, where most roots are, dries first; uptake is "
+        f"compensated from wetter layers until the root zone's stress index falls below ωc = "
+        f"{crop.omega_c:g} ([field model report](../field_model/README.md)).",
         "",
         "The irrigated field run again without oxygen stress (Feddes h1 = h2 = 0 cm) shows how much "
         "of the loss comes from it:",
@@ -281,8 +281,8 @@ def main(argv=None):
                      f"{np.mean([season_sum(name, y, 'irrigation') for y in years]):.0f} | {relative:.2f} |")
     lines += [
         "",
-        "Both causes are properties of the field model rather than of the yield response: a daily time "
-        "step with the whole refill on one day, and root water uptake without compensation.",
+        "How the field model's root uptake and irrigation settings change these numbers is shown in "
+        "the [field model report](../field_model/README.md).",
         "",
         "## 3. Yield and water productivity",
         "",

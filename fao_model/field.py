@@ -18,6 +18,10 @@ H_WILTING_POINT = -15000.0  # cm (1500 kPa)
 # thickness (5 cm layers gave ~30 % more); the field is laterally uniform, so one
 # column gives the same result as a 3D grid.
 COLUMN = dict(nx=1, ny=1, nz=60, dz=2.5)
+# Two thirds of the default soil's saturated conductivity (9 mm/hour): all of it
+# infiltrates. Spread over 24 hours instead, a small irrigation acts like a
+# day-long drizzle that stays near the surface and evaporates.
+IRRIGATION_RATE = 6.0       # mm/hour
 
 
 class FieldModel:
@@ -28,6 +32,11 @@ class FieldModel:
     depletion, default the crop's p), refilling the root zone to field
     capacity on that day; False for a rainfed field.
 
+    irrigation_rate: application rate in mm/hour. The irrigation starts at
+    the beginning of the day and lasts amount / rate hours, a day at most;
+    None spreads it over the whole day. Rain, evaporation and transpiration
+    are always spread over the whole day.
+
     rain_forecast: optional callable(day record) -> rain (mm) expected over
     the next `rain_days` days starting that day, from a forecast issued the
     evening before. When at least `postpone_rain` mm is expected, a due
@@ -36,10 +45,12 @@ class FieldModel:
     """
 
     def __init__(self, crop=None, irrigation=False, soil=None, mad=None,
-                 rain_forecast=None, rain_days=3, postpone_rain=10.0, max_depletion=0.75):
+                 rain_forecast=None, rain_days=3, postpone_rain=10.0, max_depletion=0.75,
+                 irrigation_rate=IRRIGATION_RATE):
         self.crop = crop or Crop()
         self.soil = soil or RichardsSolver3D(**COLUMN)
         self.irrigation = irrigation
+        self.irrigation_rate = irrigation_rate
         self.mad = self.crop.p if mad is None else mad
         self.rain_forecast = rain_forecast
         self.rain_days = rain_days
@@ -72,11 +83,18 @@ class FieldModel:
                 postponed = True
             else:
                 irrigation = dr
-        q_top = (d["precip"] + irrigation - ep) / 10.0
-        out = self.soil.step(
-            q_top, dt=1.0, tp=tp / 10.0,
+        q_day = (d["precip"] - ep) / 10.0       # cm/day: rain minus evaporation, all day
+        hours = 24.0
+        if irrigation > 0.0 and self.irrigation_rate is not None:
+            hours = min(24.0, irrigation / self.irrigation_rate)
+        segments = [(hours / 24.0, q_day + irrigation / 10.0 * 24.0 / hours)]
+        if hours < 24.0:
+            segments.append((1.0 - hours / 24.0, q_day))
+        out = self.soil.run(
+            segments, tp=tp / 10.0,
             root_weights=root_weights(zr_cm, self.soil.dz, self.soil.nz),
             alpha=lambda h: self.crop.feddes_alpha(h, tp / 10.0),
+            omega_c=self.crop.omega_c,
         )
         dr_end, taw_end = self.root_zone(zr_cm)
         self.last = dict(
@@ -84,6 +102,7 @@ class FieldModel:
             eto=eto,
             precip=d["precip"],
             irrigation=irrigation,
+            irrigation_hours=hours if irrigation > 0.0 else 0.0,
             postponed=postponed,
             tp=tp,
             ep=ep,
