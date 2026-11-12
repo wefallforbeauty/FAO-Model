@@ -25,7 +25,7 @@ from matplotlib.lines import Line2D
 from . import data as weather_data
 from .crop import Crop, adjust_for_climate
 from .et import asce_pm
-from .field import COLUMN, H_FIELD_CAPACITY, FieldModel
+from .field import COLUMN, H_FIELD_CAPACITY, IRRIGATION_RATE, FieldModel
 from .forecast import Climatology, WeatherForecaster, add_eto
 from .forecast_skill import SPLIT, cached
 from .metrics import compare
@@ -38,10 +38,12 @@ TOTALS = ("precip", "irrigation", "eto", "tp", "ta", "ep", "ea", "drainage", "ru
 TOP_CM = 7.5    # topsoil depth compared with ERA5's 0-7 cm layer
 
 
-def run_field(records, eto, crop, irrigation, snapshot_at=None):
+def run_field(records, eto, crop, irrigation, snapshot_at=None, **field_options):
     """Daily results of one scenario, the soil water profile on each planting day, and a copy
-    of the field as it was at the start of `snapshot_at` (None if not reached)."""
-    field = FieldModel(crop, irrigation=irrigation, soil=RichardsSolver3D(**COLUMN))
+    of the field as it was at the start of `snapshot_at` (None if not reached).
+
+    field_options go to FieldModel (e.g. irrigation_rate)."""
+    field = FieldModel(crop, irrigation=irrigation, soil=RichardsSolver3D(**COLUMN), **field_options)
     n_top = int(round(TOP_CM / field.soil.dz))
     days, profiles, snapshot = [], {}, None
     for d, e in zip(records, eto):
@@ -381,9 +383,11 @@ def main(argv=None):
         f"{H_FIELD_CAPACITY:g} cm (θ = {field.theta_fc:.3f}), wilting point θ = {field.theta_wp:.3f}.",
         "- ET: FAO-56 dual crop coefficients give potential transpiration (Kcb·ETo) and soil "
         "evaporation (Ke·ETo); the Richards solver limits both: roots take water through the "
-        "Feddes stress function, evaporation stops as the surface dries.",
+        f"Feddes stress function with compensation (ωc = {crop.omega_c:g}), evaporation stops as the "
+        "surface dries.",
         f"- Scenarios: **rainfed**, and **irrigated** whenever the root-zone depletion reaches "
-        f"{crop.p:.0%} of the total available water, refilling the root zone to field capacity.",
+        f"{crop.p:.0%} of the total available water, refilling the root zone to field capacity at "
+        f"{IRRIGATION_RATE:g} mm/hour.",
         "",
         "## 1. Mean seasonal water balance",
         "",
@@ -456,6 +460,8 @@ def main(argv=None):
                 vals.append(np.mean([theirs[name][y][key] for y in common]))
             lines.append(_row(label, vals, "{:.1f}" if key == "irrigations" else "{:.0f}"))
         refill = crop.p * (field.theta_fc - field.theta_wp) * crop.zr_max * 1000.0
+        evap_ratio = {name: np.mean([by_scenario[name][y]["ea"] for y in common])
+                      / np.mean([theirs[name][y]["ea"] for y in common]) for name in SCENARIOS}
         lines += [
             "",
             "Season by season (this model − pyfao56):",
@@ -484,12 +490,14 @@ def main(argv=None):
             "- irrigation here refills the root zone to field capacity, while pyfao56 also adds "
             "the day's estimated ET;",
             "- transpiration stress here follows the Feddes function of the local pressure head, "
-            "in pyfao56 a linear function of root-zone depletion;",
+            "with compensation between layers, in pyfao56 a linear function of root-zone depletion;",
             "- here water moves between layers by Richards flow and drains below the roots after "
             "each refill; pyfao56 drains instantly to field capacity.",
             "",
-            "Soil evaporation agrees with the 2.5 cm top layer used here; 5 cm layers gave about "
-            "30 % more.",
+            f"Soil evaporation is {evap_ratio['rainfed']:.0%} of pyfao56's in the rainfed field and "
+            f"{evap_ratio['irrigated']:.0%} in the irrigated one, where irrigation at "
+            f"{IRRIGATION_RATE:g} mm/hour soaks below the evaporating top layers. It depends on the top "
+            f"layer's thickness: 5 cm layers gave about 30 % more than the {COLUMN['dz']:g} cm used here.",
         ]
         pyfao56_chart(out / "pyfao56.png", by_scenario, theirs)
 
