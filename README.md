@@ -1,4 +1,4 @@
-# FAO-Model 06
+# FAO-Model 07
 
 Daily evapotranspiration (ET) equations and the water balance of an irrigated
 maize field on a 3D Richards soil-water solver, with a forecasting dashboard,
@@ -13,10 +13,11 @@ driven by real weather data. What changed in this version:
   validation.
 - **Crop**: grain maize with FAO-56 dual crop coefficients. Potential
   transpiration goes to growing roots through the Feddes stress function,
-  potential soil evaporation to the surface.
+  with compensation: roots in wetter layers make up for stressed ones
+  (Jarvis, 1989). Potential soil evaporation goes to the surface.
 - **Irrigation**: optional automatic irrigation that refills the root zone
-  to field capacity when 55 % of the available water is used; it can wait
-  when rain is forecast.
+  to field capacity when 55 % of the available water is used, applied at
+  6 mm/hour; it can wait when rain is forecast.
 - **Yield**: relative yield from the crop's water use with the FAO-33 yield
   response factors (Ky) of maize by growth period, season by season and as a
   running estimate in the dashboard.
@@ -71,7 +72,8 @@ python -m fao_model --forecaster baseline   # statistical forecasts instead of T
 python -m fao_model --forecaster ecmwf --start 2024-03-15   # archived ECMWF forecasts (or gfs)
 python -m fao_model.validate            # regenerates reports/validation/
 python -m fao_model.water_balance       # regenerates reports/water_balance/ (about 8 minutes)
-python -m fao_model.yield_report        # regenerates reports/yield/ (about 8 minutes)
+python -m fao_model.yield_report        # regenerates reports/yield/ (about 10 minutes)
+python -m fao_model.field_model_report  # regenerates reports/field_model/ (about 20 minutes)
 python -m fao_model.forecast_skill      # regenerates reports/forecast_skill/ (TimesFM: about 20 minutes)
 python -m fao_model.nwp_skill           # regenerates reports/nwp/ (TimesFM: about 20 minutes)
 python -m fao_model.nwp --help          # download archived weather-model forecasts
@@ -107,6 +109,7 @@ back to plain HTTP.
 | `fao_model/metrics.py`, `fao_model/validate.py` | agreement statistics and the ET validation report |
 | `fao_model/water_balance.py` | maize water balance report: scenarios, pyfao56 and ERA5 comparisons |
 | `fao_model/yield_report.py` | maize yield report: relative yield, its causes, water productivity |
+| `fao_model/field_model_report.py` | experiments behind the field model's root uptake and irrigation settings |
 | `fao_model/plotting.py` | shared figure style of the reports |
 | `tests/` | FAO-56 examples, cross-checks against pyfao56, solver, crop, field and data tests |
 
@@ -152,16 +155,17 @@ in [reports/water_balance](reports/water_balance/README.md). Season means, mm:
 | | Rainfed | Irrigated |
 |---|---|---|
 | Rain | 51 | 51 |
-| Irrigation | 0 | 821 (14.5 times) |
-| Actual / potential transpiration | 56 / 722 | 667 / 722 |
-| Actual / potential soil evaporation | 42 / 398 | 205 / 398 |
-| Drainage below 1.5 m | 1 | 7 |
+| Irrigation | 0 | 824 (13.1 times) |
+| Actual / potential transpiration | 57 / 722 | 709 / 722 |
+| Actual / potential soil evaporation | 41 / 398 | 169 / 398 |
+| Drainage below 1.5 m | 1 | 6 |
 
 - **Rainfed:** maize at this site gets only about 8 % of the transpiration it
   needs, so it depends on irrigation.
 - **Against pyfao56:** run with the same inputs and start profiles, pyfao56
-  gives season means within 5 %: transpiration 696 mm, evaporation 201 mm and
-  irrigation 854 mm in the irrigated scenario.
+  gives similar transpiration (697 mm) and irrigation (855 mm) in the
+  irrigated scenario but 20 % more soil evaporation (203 mm): here irrigation
+  at 6 mm/hour soaks below the top layers that evaporation dries.
 - **Against ERA5:** the simulated topsoil water content follows ERA5's 0–7 cm
   soil moisture (daily r = 0.80, monthly cycle r = 0.97) but is 0.07 m³/m³
   drier; the two soils differ.
@@ -174,24 +178,48 @@ of maize, 30 seasons; full tables and figures in
 
 | Season mean of Ya/Yx | Rainfed | Irrigated |
 |---|---|---|
-| By growth period (FAO-33), used here | 0.00 | 0.83 (0.80–0.89) |
-| Whole season, Ky = 1.25 | 0.00 | 0.93 |
-| Ky on the FAO-56 stages (FAO-66 Table 2) | 0.01 | 0.89 |
-| Irrigated field without oxygen stress | | 0.89 |
+| By growth period (FAO-33), used here | 0.00 | 0.95 (0.93–0.96) |
+| Whole season, Ky = 1.25 | 0.01 | 0.98 |
+| Ky on the FAO-56 stages (FAO-66 Table 2) | 0.01 | 0.97 |
+| Irrigated field without oxygen stress | | 1.00 |
 
 - **Rainfed maize fails:** about 51 mm of rain falls in the season against
   885 mm of reference ET.
-- **The irrigated field loses 17 %, most of it at flowering** (Ky 1.50).
-  About a third of that loss is oxygen stress: the field model applies the
-  whole refill in one day, which waterlogs the top layers on irrigation days
-  and the day after (Ta/Tp 0.77 against 0.95 on other days). Without oxygen
-  stress the field reaches 0.89.
-- **Where the periods are placed matters:** with the four Ky values on the
-  FAO-56 stages instead, the irrigated mean is 0.89.
+- **The irrigated field loses 5 %, most of it at flowering** (Ky 1.50).
+  Nearly all of it is oxygen stress on irrigation days and the day after,
+  when the refill wets the top layers (Ta/Tp 0.88 against 1.00 on other
+  days). In version 06, with irrigation spread over the whole day and no
+  compensation of root uptake, the loss was 17 % (see the field model below).
+- **Where the periods are placed matters less now:** with the four Ky values
+  on the FAO-56 stages instead, the irrigated mean is 0.97.
 - **Yield and water productivity:** with an assumed maximum yield of 13 t/ha,
-  the irrigated field yields 10.8 t/ha, 1.24 kg per m³ of crop ET. Konya
-  province averaged 12.65 t/ha in 2024 (TÜİK), so the assumed maximum may be
-  low, the simulated stress too high, or both.
+  the irrigated field yields 12.3 t/ha, 1.41 kg per m³ of crop ET, close to
+  the 12.65 t/ha Konya province averaged in 2024 (TÜİK).
+
+### Field model: root uptake and irrigation
+
+Two settings of the field model decide how much a well-irrigated crop is
+stressed; the experiments behind them are in
+[reports/field_model](reports/field_model/README.md).
+
+- **Compensated root water uptake** (Jarvis, 1989), ωc = 0.8: roots in
+  wetter layers make up for stressed ones. Without it, a drying root zone
+  stresses the crop from 45 % depletion, before the 55 % irrigation trigger,
+  because the upper root zone, where most roots are, dries first. With
+  ωc = 0.8 stress starts at 55 %, the FAO-56 depletion fraction p of maize.
+  No value of ωc is tabulated for crops; it is chosen for that agreement.
+- **Irrigation at 6 mm/hour** from the start of the day: spread over 24 hours,
+  a small irrigation behaves like a drizzle that stays in the top few
+  centimetres and evaporates.
+
+Irrigated maize, 30 seasons:
+
+| Field model | Ta/Tp | Irrigation (mm) | Soil evaporation (mm) | Ya/Yx |
+|---|---|---|---|---|
+| As in 06: all day, no compensation | 0.924 | 821 | 205 | 0.83 |
+| 6 mm/hour, no compensation | 0.926 | 781 | 168 | 0.84 |
+| All day, ωc = 0.8 | 0.979 | 865 | 209 | 0.94 |
+| 6 mm/hour, ωc = 0.8 (used now) | 0.982 | 824 | 169 | 0.95 |
 
 ### Forecasts
 
@@ -216,11 +244,10 @@ Reference ET error (mm/day) by days ahead:
 - **Why the ceiling:** a single site's history cannot see weather systems
   coming; that takes numerical weather prediction.
 - **Irrigation with rain forecasts:** postponing irrigation when rain is
-  forecast saves no water at this site, because in-season rain is too rare.
-  Over 2015–2024 only 3 irrigations were followed by at least 10 mm of rain
-  within three days. A perfect forecast avoids those 3 but uses as much water
-  over the season (820 against 818 mm). TimesFM and the baseline never
-  postponed. Details:
+  forecast saves little water at this site, because in-season rain is rare.
+  Over 2015–2024 only 2 irrigations were followed by at least 10 mm of rain
+  within three days. A perfect forecast avoids both and saves 15 mm a season
+  (816 against 831 mm). TimesFM and the baseline never postponed. Details:
   [reports/water_balance](reports/water_balance/README.md), section 6.
 
 ### Weather-model forecasts
@@ -284,10 +311,10 @@ the next 1–7 days; full tables and figures in [reports/nwp](reports/nwp/README
 - **Near saturation** the explicit solver needs very small sub-steps (heavy rain
   on fine soils, ponding), and it stops with an error if a layer would exceed
   saturation. An implicit scheme removes that limit.
-- **Daily surface flux:** rain, irrigation and soil evaporation are combined into
-  one net surface flux per day.
+- **Daily surface flux:** rain and soil evaporation are spread evenly over the
+  day; only irrigation has a duration within the day.
 - **Irrigation is idealised:**
-  - 100 % efficient and applied within one day;
+  - 100 % efficient, at a fixed 6 mm/hour from the start of the day;
   - always refills the root zone to field capacity;
   - no limits on amount, interval or available water;
   - forecasts are used only to postpone irrigation before rain.
@@ -302,15 +329,13 @@ the next 1–7 days; full tables and figures in [reports/nwp](reports/nwp/README
   - absolute yields rest on an assumed maximum yield (13 t/ha);
   - there is no crop growth model (biomass, harvest index), and stresses other
     than water (heat, nutrients) are left out.
-- **Stress in the irrigated field** comes partly from the field model:
-  - the whole refill is applied in one day, so the top layers become wet
-    enough for the Feddes function's oxygen stress on irrigation days and the
-    day after;
-  - root water uptake has no compensation: uptake lost in dry top layers is
-    not taken from wetter, deeper ones.
-
-  Without oxygen stress the irrigated field's relative yield rises from 0.83
-  to 0.89 in the yield report.
+- **Stress in the irrigated field** now comes almost only from the Feddes
+  function's oxygen stress on irrigation days and the day after. The wet
+  thresholds (−15 and −30 cm) act as soon as the top layers are that wet,
+  while a short wet spell after irrigation probably hurts real maize less.
+- **Compensation** (ωc = 0.8) is chosen to make stress start at the FAO-56
+  depletion fraction, not measured; at high demand (8 mm/day) FAO-56 would
+  start stress earlier.
 - **Validation** is against computed references (ASCE-PM, Open-Meteo ET0,
   pyfao56, ERA5 soil moisture), not measurements, and covers one site. ERA5 is
   reanalysis, not station data.
@@ -326,20 +351,16 @@ the next 1–7 days; full tables and figures in [reports/nwp](reports/nwp/README
      a seasonal water budget, compared by yield and water productivity;
    - optimize the trigger and amounts for water productivity, with
      weather-model forecasts of ET for the coming week.
-2. **Root uptake and irrigation in the field model:** irrigation applied over
-   hours instead of one day, and compensated root water uptake (for example
-   Jarvis, 1989), which change the stress of the irrigated field (see the yield
-   report).
-3. **Soil solver:**
+2. **Soil solver:**
    - implicit Richards solver (mixed-form modified Picard, then Newton) on a
      grid refined near the surface, compared with the explicit one;
    - soil parameters from the Carsel & Parrish (1988) texture classes, or
      SoilGrids with Rosetta for the site.
-4. **Sensitivity analysis:** Morris screening and Sobol indices of the ET
+3. **Sensitivity analysis:** Morris screening and Sobol indices of the ET
    equations, the field water balance and the yield to their parameters.
-5. **Uncertainty:** Monte Carlo on inputs and parameters; ensemble weather
+4. **Uncertainty:** Monte Carlo on inputs and parameters; ensemble weather
    forecasts and TimesFM's quantiles in irrigation decisions.
-6. **Forecasts:** TimesFM with the weather-model forecasts as covariates
+5. **Forecasts:** TimesFM with the weather-model forecasts as covariates
    (XReg), and better bias correction (regression on several predictors).
-7. **Measured data:** validation against measured ET (lysimeter or eddy
+6. **Measured data:** validation against measured ET (lysimeter or eddy
    covariance), in-situ soil moisture and yields, and more sites.

@@ -1,5 +1,74 @@
 # Update log
 
+## 07 (2026-11-12)
+
+Pull request #7. The 06 yield report found that a field irrigated whenever
+it needs water still lost 17 % of its yield, and traced much of that to the
+field model rather than to the crop. 07 changes the two settings behind it
+and shows the experiments that support the new values.
+
+### Field model
+
+- **Compensated root water uptake** (Jarvis, 1989; Šimůnek and Hopmans,
+  2009). ω, the root-weighted mean of the Feddes factor, measures the stress
+  of the whole root zone. While ω ≥ ωc, roots in favourable layers make up
+  for stressed ones and transpiration stays potential; below, it is ω/ωc of
+  potential. `Crop.omega_c` defaults to 0.8; 1.0 gives the uncompensated
+  uptake of 03–06.
+- **Irrigation with a duration:** `FieldModel(irrigation_rate=...)` applies
+  the refill at that rate from the start of the day (default 6 mm/hour, two
+  thirds of the soil's saturated conductivity); `None` spreads it over the
+  day as before. Rain and evaporation stay spread over the day.
+- `RichardsSolver3D.step(..., omega_c=...)` and `RichardsSolver3D.run(segments)`
+  for consecutive parts of a day.
+
+### Field model report
+
+`python -m fao_model.field_model_report` (`reports/field_model/`):
+
+- **Dry-down:** without compensation a drying root zone stresses the crop
+  from 45 % depletion, before the 55 % trigger. With ωc = 0.8 stress starts
+  at 55 %, the FAO-56 p of maize. No crop value of ωc is tabulated, so it is
+  chosen for that agreement.
+- **One irrigation:** 14 mm spread over 24 hours stays in the top 12.5 cm and
+  evaporates within a week; at 6 mm/hour it reaches 17.5 cm and 1.6 mm more
+  stays in the soil.
+- **Irrigated maize, 1995–2024:**
+
+| Field model | Ta/Tp | Irrigation (mm) | Soil evaporation (mm) | Ya/Yx |
+|---|---|---|---|---|
+| As in 06 | 0.924 | 821 | 205 | 0.83 |
+| 6 mm/hour, no compensation | 0.926 | 781 | 168 | 0.84 |
+| All day, ωc = 0.8 | 0.979 | 865 | 209 | 0.94 |
+| 6 mm/hour, ωc = 0.8 (used now) | 0.982 | 824 | 169 | 0.95 |
+
+### Other reports, regenerated with the new field model
+
+- **Yield:** the irrigated field's relative yield is 0.95 (06: 0.83), 12.3 t/ha
+  with the assumed 13 t/ha maximum, close to the Konya average (12.65 t/ha in
+  2024). The remaining loss is oxygen stress just after irrigation.
+- **Water balance:** irrigated transpiration 709 mm (06: 667), soil
+  evaporation 169 mm (205), irrigation 824 mm in 13.1 refills (821 in 14.5).
+  pyfao56 now gives 20 % more soil evaporation than this model.
+- **Irrigation with rain forecasts:** a perfect forecast now saves 15 mm a
+  season (816 against 831 mm); TimesFM and the baseline still never postpone.
+
+### Dashboard
+
+- The maize panel shows how long the day's irrigation lasts.
+
+### Behaviour changes
+
+- Default results of the field, water balance and yield models change with
+  the two new defaults. `Crop(omega_c=1.0)` with
+  `FieldModel(irrigation_rate=None)` reproduces 06 exactly.
+- `water_balance.run_field(..., **field_options)` passes options to
+  `FieldModel`.
+
+### Items addressed from the 01 notes
+
+None directly.
+
 ## 06 (2026-10-17)
 
 Pull request #6. Until 05 the model could say how much water the maize
