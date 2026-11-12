@@ -62,6 +62,8 @@ class RichardsSolver3D:
     - bottom: free drainage (unit gradient), sides: no flow.
     Roots can extract water (sink term): potential transpiration spread
     over the layers by root weights and reduced by a stress factor alpha(h).
+    With omega_c < 1 the roots make up for stressed layers by taking more
+    from the others (Jarvis, 1989).
     Sub-steps follow the explicit stability limit, which becomes very small
     in near-saturated soil; that case needs an implicit scheme.
     """
@@ -142,14 +144,21 @@ class RichardsSolver3D:
         e_max = K0 * ((h0 - self.h_min) / half - 1.0)
         return -np.minimum(-q_top, np.maximum(e_max, 0.0))
 
-    def step(self, q_top, dt=1.0, tp=0.0, root_weights=None, alpha=None):
+    def step(self, q_top, dt=1.0, tp=0.0, root_weights=None, alpha=None, omega_c=1.0):
         """Advance dt days with surface flux q_top (cm/day, + downward: rain minus evaporation).
 
         tp is the potential transpiration (cm/day), taken from layer k at the
-        rate alpha(h_k) * root_weights[k] * tp; root_weights sum to 1 over the
-        layers and alpha(h) is the 0-1 stress factor (e.g. Feddes).
+        rate alpha(h_k) * root_weights[k] * tp / max(omega, omega_c);
+        root_weights sum to 1 over the layers, alpha(h) is the 0-1 stress
+        factor (e.g. Feddes) and omega = sum(alpha * root_weights) is the
+        stress index of the whole root zone. omega_c = 1 is uptake without
+        compensation (Feddes et al., 1978). With omega_c < 1, transpiration
+        stays at tp while omega >= omega_c and is tp * omega / omega_c below
+        that (Jarvis, 1989; Simunek and Hopmans, 2009).
         Returns this step's water balance terms in cm, averaged over the surface.
         """
+        if not 0.0 < omega_c <= 1.0:
+            raise ValueError("omega_c must be in (0, 1]")
         p = self.params
         dz = self.dz
         inv_d2 = 1.0 / self.dx ** 2 + 1.0 / self.dy ** 2 + 1.0 / dz ** 2
@@ -166,7 +175,9 @@ class RichardsSolver3D:
             K = self._K(h)
             rate_int, q_bottom = self._internal_rates(h, K)
             if tp > 0.0:
-                uptake = alpha(h) * np.asarray(root_weights) * (tp / dz)    # 1/day
+                weighted = alpha(h) * np.asarray(root_weights)
+                omega = weighted.sum(axis=2, keepdims=True)
+                uptake = weighted / np.maximum(omega, omega_c) * (tp / dz)   # 1/day
                 rate_int -= uptake
                 transpiration = uptake.sum(axis=2) * dz                       # cm/day per column
             else:
@@ -211,6 +222,18 @@ class RichardsSolver3D:
             self.totals[key] += value
         self.last_step = dict(step_totals, substeps=substeps)
         return self.last_step
+
+    def run(self, segments, **uptake):
+        """Consecutive step() calls, one per (duration in days, q_top) segment.
+
+        Returns the summed water balance terms; last_step holds them too.
+        """
+        total = dict.fromkeys(self.last_step, 0.0)
+        for duration, q_top in segments:
+            for key, value in self.step(q_top, dt=duration, **uptake).items():
+                total[key] += value
+        self.last_step = total
+        return total
 
     @property
     def storage(self):

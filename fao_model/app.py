@@ -196,7 +196,8 @@ class App:
             f"Soil evaporation   : potential {f['ep']:.2f}, actual {f['ea']:.2f} mm/day\n"
             f"Root-zone depletion: {f['dr']:.1f} of {f['taw']:.1f} mm available "
             f"(irrigate at {sim.field.mad:.0%})\n"
-            f"Irrigation today   : {f['irrigation']:.1f} mm\n"
+            f"Irrigation today   : {f['irrigation']:.1f} mm"
+            + (f" over {f['irrigation_hours']:.1f} h\n" if f["irrigation"] > 0 else "\n")
         )
         estimate = sim.season_yield
         if f["t"] is not None and estimate.totals:
